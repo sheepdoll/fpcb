@@ -1,0 +1,283 @@
+PCBNEW-BOARD Version 1 date Monday, 17 February 2014 20:11:15
+
+# Created by Pcbnew(2012-05-25 BZR 3578)-testing
+
+$GENERAL
+encoding utf-8
+Units deci-mils
+LayerCount 2
+EnabledLayers 1FFF8001
+Links 3
+NoConn 0
+Di 7999 5999 22501 14501
+Ndraw 4
+Ntrack 9
+Nzone 0
+BoardThickness 630
+Nmodule 3
+Nnets 4
+$EndGENERAL
+
+$SHEETDESCR
+Sheet A3 16535 11693
+Title ""
+Date "18 feb 2014"
+Rev ""
+Comp ""
+Comment1 ""
+Comment2 ""
+Comment3 ""
+Comment4 ""
+$EndSHEETDESCR
+
+$SETUP
+Layers 2
+Layer[0] Back signal
+Layer[15] Front signal
+TrackWidth 100
+TrackWidthList 120
+TrackWidthList 240
+TrackWidthList 300
+TrackWidthList 360
+TrackClearence 100
+ZoneClearence 200
+Zone_45_Only 0
+TrackMinWidth 100
+DrawSegmWidth 150
+EdgeSegmWidth 150
+ViaSize 350
+ViaDrill 250
+ViaMinSize 350
+ViaMinDrill 200
+MicroViaSize 200
+MicroViaDrill 50
+MicroViasAllowed 0
+MicroViaMinSize 200
+MicroViaMinDrill 50
+TextPcbWidth 120
+TextPcbSize 600 800
+EdgeModWidth 150
+TextModSize 600 600
+TextModWidth 120
+PadSize 600 600
+PadDrill 320
+Pad2MaskClearance 100
+AuxiliaryAxisOrg 0 0
+VisibleElements FFFFFFBF
+PcbPlotParams (pcbplotparams (layerselection 3178497) (usegerberextensions true) (excludeedgelayer true) (linewidth 60) (plotframeref false) (viasonmask false) (mode 1) (useauxorigin false) (hpglpennumber 1) (hpglpenspeed 20) (hpglpendiameter 15) (hpglpenoverlay 0) (pscolor true) (psnegative false) (psa4output false) (plotreference true) (plotvalue true) (plotothertext true) (plotinvisibletext false) (padsonsilk false) (subtractmaskfromsilk false) (outputformat 1) (mirror false) (drillshape 1) (scaleselection 1) (outputdirectory ""))
+$EndSETUP
+
+$EQUIPOT
+Na 0 ""
+St ~
+$EndEQUIPOT
+$EQUIPOT
+Na 1 "GND"
+St ~
+$EndEQUIPOT
+$EQUIPOT
+Na 2 "N-000001"
+St ~
+$EndEQUIPOT
+$EQUIPOT
+Na 3 "N-000002"
+St ~
+$EndEQUIPOT
+$NCLASS
+Name "Default"
+Desc "This is the default net class."
+Clearance 100
+TrackWidth 100
+ViaDia 350
+ViaDrill 250
+uViaDia 200
+uViaDrill 50
+AddNet ""
+AddNet "GND"
+AddNet "N-000001"
+AddNet "N-000002"
+$EndNCLASS
+$MODULE SUPER_CAP
+Po 12500 9500 0 15 4512B411 52FAADAE ~~
+Li SUPER_CAP
+Sc 52FAADAE
+AR /52FAA7A4
+Op 0 0 0
+T0 200 -1400 600 400 0 80 N V 21 N "B1"
+T1 0 1400 600 400 0 80 N V 21 N "6V"
+T2 1750 -700 600 600 0 80 N V 21 N "+"
+DC 0 0 0 -2200 150 21
+DS -2500 750 0 750 150 21
+DS 0 750 500 250 150 21
+DS 500 250 500 -250 150 21
+DS 500 -250 0 -750 150 21
+DS 0 -750 -2500 -750 150 21
+DS -2500 -750 -2500 750 150 21
+DS -2250 0 -2500 0 120 21
+$PAD
+Sh "2" C 750 750 0 0 0
+Dr 470 0 0
+At STD N 00E0FFFF
+Ne 1 "GND"
+Po -2500 0
+$EndPAD
+$PAD
+Sh "1" C 750 750 0 0 0
+Dr 470 0 0
+At STD N 00E0FFFF
+Ne 2 "N-000001"
+Po 1500 0
+$EndPAD
+$EndMODULE SUPER_CAP
+$MODULE R3
+Po 19500 9500 0 15 4E4C0E65 52FAADBC ~~
+Li R3
+Cd Resitance 3 pas
+Kw R
+Sc 52FAADBC
+AR /52FAA8AD
+Op 0 A 0
+T0 0 50 550 500 0 80 N I 21 N "R1"
+T1 0 50 550 500 0 80 N V 21 N "330"
+DS -1500 0 -1300 0 80 21
+DS 1500 0 1300 0 80 21
+DS 1300 0 1300 -400 80 21
+DS 1300 -400 -1300 -400 80 21
+DS -1300 -400 -1300 400 80 21
+DS -1300 400 1300 400 80 21
+DS 1300 400 1300 0 80 21
+DS -1300 -200 -1100 -400 80 21
+$PAD
+Sh "1" C 550 550 0 0 0
+Dr 320 0 0
+At STD N 00E0FFFF
+Ne 2 "N-000001"
+Po -1500 0
+$EndPAD
+$PAD
+Sh "2" C 550 550 0 0 0
+Dr 320 0 0
+At STD N 00E0FFFF
+Ne 3 "N-000002"
+Po 1500 0
+$EndPAD
+$SHAPE3D
+Na "discret/resistor.wrl"
+Sc 0.300000 0.300000 0.300000
+Of 0.000000 0.000000 0.000000
+Ro 0.000000 0.000000 0.000000
+$EndSHAPE3D
+$EndMODULE R3
+$MODULE LED-5MM
+Po 16000 12500 0 15 49BFA269 52FAADCB ~~
+Li LED-5MM
+Cd LED 5mm - Lead pitch 100mil (2,54mm)
+Kw LED led 5mm 5MM 100mil 2,54mm
+Sc 52FAADCB
+AR /52FAA873
+Op 0 0 0
+T0 0 -1500 300 300 0 35 N V 21 N "D1"
+T1 0 1500 300 300 0 35 N V 21 N "LED"
+DS 1120 750 1120 -750 80 21
+DC 100 0 -400 500 30 21
+DA 100 0 1100 750 2862 100 21
+DA 100 0 -350 0 900 60 21
+DA 100 0 550 0 900 60 21
+DA 100 0 -550 0 900 60 21
+DA 100 0 750 0 900 60 21
+DA 100 0 -750 0 900 60 21
+DA 100 0 950 0 900 60 21
+$PAD
+Sh "1" C 660 660 0 0 0
+Dr 320 0 0
+At STD N 00A8FFFF
+Ne 1 "GND"
+Po -500 0
+$EndPAD
+$PAD
+Sh "2" C 660 660 0 0 0
+Dr 320 0 0
+At STD N 00A8FFFF
+Ne 3 "N-000002"
+Po 500 0
+$EndPAD
+$SHAPE3D
+Na "discret/leds/led5_vertical_verde.wrl"
+Sc 1.000000 1.000000 1.000000
+Of 0.000000 0.000000 0.000000
+Ro 0.000000 0.000000 0.000000
+$EndSHAPE3D
+$EndMODULE LED-5MM
+$DRAWSEGMENT
+Po 0 8000 6000 22500 6000 0
+De 28 0 900 0 0
+$EndDRAWSEGMENT
+$DRAWSEGMENT
+Po 0 22500 14500 22500 6000 0
+De 28 0 900 0 0
+$EndDRAWSEGMENT
+$DRAWSEGMENT
+Po 0 8000 14500 22500 14500 0
+De 28 0 900 0 0
+$EndDRAWSEGMENT
+$DRAWSEGMENT
+Po 0 8000 6000 8000 14500 0
+De 28 0 900 0 0
+$EndDRAWSEGMENT
+$TRACK
+Po 0 10000 9500 10000 11500 300 -1
+De 0 0 1 0 0
+Po 0 11000 12500 15500 12500 300 -1
+De 0 0 1 52FAAE1D 0
+Po 0 10000 11500 11000 12500 300 -1
+De 0 0 1 52FAAE19 0
+Po 0 18000 9500 16500 9500 100 -1
+De 15 0 2 0 0
+Po 0 16500 9500 14000 9500 100 -1
+De 0 0 2 52FAAF6B 0
+Po 3 16500 9500 16500 9500 350 -1
+De 15 1 2 0 0
+Po 0 16500 12500 20000 12500 120 -1
+De 15 0 3 0 0
+Po 0 20000 12500 21000 11500 120 -1
+De 15 0 3 52FAAE50 0
+Po 0 21000 11500 21000 9500 120 -1
+De 15 0 3 52FAAE58 0
+$EndTRACK
+$ZONE
+$EndZONE
+$CZONE_OUTLINE
+ZInfo 5302DBCA 0 ""
+ZLayer 21
+ZAux 4 F
+ZClearance 200 T
+ZMinThickness 100
+ZOptions 0 16 F 200 200
+ZSmoothing 0 0
+ZCorner 16000 7000 0
+ZCorner 16000 6500 0
+ZCorner 15500 6500 0
+ZCorner 15500 7000 1
+$endCZONE_OUTLINE
+$CZONE_OUTLINE
+ZInfo 5302DBFE 0 ""
+ZLayer 15
+ZAux 12 E
+ZClearance 200 T
+ZMinThickness 100
+ZOptions 0 16 F 250 250
+ZSmoothing 0 0
+ZCorner 21000 11000 0
+ZCorner 21000 7500 0
+ZCorner 18000 7500 0
+ZCorner 18000 11000 1
+ZCorner 20000 8500 0
+ZCorner 20000 10000 0
+ZCorner 19000 10000 0
+ZCorner 19000 8500 1
+ZCorner 18600 7800 0
+ZCorner 18600 8000 0
+ZCorner 18400 8000 0
+ZCorner 18400 7800 1
+$endCZONE_OUTLINE
+$EndBOARD
