@@ -1,0 +1,1383 @@
+%!PS
+
+% deconstructed reader for express schematic files
+
+% requires ghostscript min and max functions
+
+%/tfn (/Users/Arethusa/quarentine/JSchemSource/testsch.sch) def
+%/tfn (/Users/Arethusa/quarentine/AVRVFDCLOCK/VFDPanel.sch) def
+/tfn (/Users/Arethusa/quarentine/EMUTEKRE/NetlistFFex.sch) def
+
+
+
+
+/=$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile =} bind def
+
+/$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile } bind def
+
+%/dfa {pop} bind def  %
+/dfa {{ exch =string cvs print (: ) print ==} forall} bind def
+
+
+/Word_l$ <870000> def			% low first
+/Long_l$ <8500000000> def		% low first
+
+/Word$ <860000> def			% high first
+/Long$ <8400000000> def		% high first
+
+
+/verbose false def
+
+/render true def
+
+
+
+%--------------------------
+
+/flushFlag false def  % only render on exit
+
+
+% level2 date function
+(%Calendar%) /IODevice resourcestatus {
+   pop pop (%Calendar%) currentdevparams
+   dup /Running get {
+     dup /Year get 4 string cvs print (-) print
+     dup /Month get 2 string cvs print (-) print
+     dup /Day get 2 string cvs print ( ) print
+     dup /Hour get 2 string cvs print (:) print
+     dup /Minute get 100 add 3 string cvs 1 2 getinterval print (:) print
+     /Second get 100 add 3 string cvs 1 2 getinterval print (\n) print
+   } {
+     (Clock/calendar is present but not running.\n) print
+   } ifelse
+ } {
+   (No clock/calendar present.\n) print
+ } ifelse
+
+
+%quick and dirty proc for making a sort of timestamp
+/TimeStamp {
+(%Calendar%) currentdevparams begin
+10 dict begin  % make a local dictionary for constants
+/SEC_PER_HOUR 60 60 mul def
+/SEC_PER_DAY SEC_PER_HOUR 24 mul def 
+/SEC_IN_MONTH [0 2678400 5097600 7776000 10368000 13046400 15638400 18316800 20995200 23587200 26265600 28857600] def
+
+Year 1970 sub 365.2425 mul SEC_PER_DAY mul % approximate the number of seconds since 0 time
+SEC_IN_MONTH Month 1 sub get add  % add in the seconds to the first of the month
+Day 1 sub SEC_PER_DAY mul add % seconds to midnight the prior day
+Hour SEC_PER_HOUR mul add
+Minute 60 mul add
+Second add cvi 16 8 string cvrs
+
+end
+end
+} bind def
+% functions for decoding the input stream
+
+/initIO {
+
+	tf read	not {exit} if	% read low byte 
+	tf read	not {exit} if	% read high byte
+	8 bitshift or
+
+	/key exch def
+	
+(\nkey: 0x) print key 16 =string cvrs = 
+
+} bind def
+
+/nextKeyNumber {
+	/paramInt key def
+
+	17 {
+		/j 0 def
+		paramInt 16#20 and 0 ne {/j 1 def}	if
+		paramInt 16#08 and 0 ne {/j j 1 add def}if	
+		paramInt 16#04 and 0 ne {/j j 1 add def}if	
+		paramInt 16#01 and 0 ne {/j j 1 add def}if
+		
+		/paramInt paramInt -1 bitshift def
+		
+		j 16#1 and 0 ne {/paramInt paramInt 32768 add def}if
+			
+	} repeat
+
+	/key paramInt def
+
+} bind def
+
+
+/read1 {
+
+	tf read	not {exit} if	% read i
+	
+	nextKeyNumber
+
+	key xor 255 and
+	
+} bind def
+
+/read2 {
+	tf read	not {exit} if	% read i
+	tf read	not {exit} if	% read j
+	8 bitshift or			% j << 8			
+
+	nextKeyNumber
+
+	key xor 65535 and 
+
+} bind def
+
+/read3 {
+
+	
+	tf read	not {exit} if	% read i
+	tf read	not {exit} if	% read j
+	8 bitshift or			% j << 8			
+	tf read	not {exit} if	% read k
+	16 bitshift or			% k << 16
+
+	/m exch def
+	
+	nextKeyNumber 
+
+	/n key 16 bitshift def
+	
+	nextKeyNumber
+
+	/n n key or def
+	
+	/m m n xor def
+
+	/m m 16777215 and def %0xFFFFFF
+
+	m 16#800000 and 0 ne {/m m -16777216 or def }if % 0xFF000000
+
+	m
+	
+	
+} bind def
+
+
+% constant lookup tables
+
+/SCHFILE 16#5678 def
+/CMPFILE 16#5685 def
+/PCBFILE 16#B9C7 def
+/FPTFILE 16#7DF8 def
+
+
+/DIRECTION [0 0 90 180 270] def 
+
+/FONT [/nil /PLAIN /BOLD] def
+
+/CIRCLE [ 0 360 300 210 180 90 /CIRCLE_CORNER ] def
+
+/COMPONENT_TYPE [/nil /SHEET /COMPONENT /SYMBOL] def
+
+%*fields Properties
+%-Reference
+%U for integrated circuits (like 74xx,40xx)
+%IC for integrated circuits (SP3485EN)
+%IC for atmel processors
+%T for audio transformers
+%CON for connectors
+%BUS for PC busses (AT,
+%J for PC busses (PCI)
+%J for db connectors 
+%P for bus (C-64,RJ45)
+%P for single and double row connectors
+%P for BNC connector
+%S for 7 segment display
+%AFF for 7 segment display
+%BT for battery
+%D for LED, bridge, 
+%JP for breaker (jumper)
+%C for capacitor
+%F for ceramic filter
+%FI for emi filter
+%FB for filter
+%SW for switch
+%X for crystal
+%Q for transistors, fets
+%R for resistor
+%RV for variable resistors (pot)
+%RP for resistor array
+%F for fuse
+%L for inductor
+%K for relay
+%SP for speaker
+%TH for thermistor
+%T for thyristor
+%U for triac
+%TST for test pin
+%#PWR for power pins
+%U for valves
+
+%-Value
+%~when unknown
+%-Footprint
+%~when unknown
+%-Datasheet
+%~when unknown
+
+
+
+
+
+
+/getAttributes {
+
+	/paramInt exch def
+	
+	/TextAttributes << % >>
+	
+		/attrib_vis paramInt 16#08 and 0 ne
+	
+		/attrib_dir paramInt 3 and
+	
+		/attrib_size paramInt 16 div
+	
+		/attrib_style 1 def		% fixed style
+		
+		/Object /attributesType 
+	
+	>> def
+	
+	TextAttributes begin
+	(TextAttributes: d:) print 
+	DIRECTION attrib_dir get =string cvs print
+	
+	( s:) print attrib_size =string cvs print
+	
+	( f:) print attrib_style =string cvs print
+	
+	( v:) print attrib_vis =string cvs =
+	
+	end
+
+} bind def
+
+% renderers and object display functions
+
+/renderers << % >>
+
+	/attributesType {}
+
+
+	/sheetType1 {
+
+				612 width div dup scale  % fit to width of page
+				0 height translate 
+				/AvanteGarde-Book 200 selectfont
+				0 0 moveto name show
+				
+				1 -1 scale  % screen coordinates
+				0 0 width height rectstroke 
+				
+			}
+			
+	/sheetType {
+			90 rotate
+			1 -1 scale
+
+			612 height div dup scale  % fit to width of page
+			
+			/AvanteGarde-Book 200 selectfont
+			0 200 moveto name show
+			
+			
+			0 0 width height rectstroke 
+			
+			(altering CTM) ==
+			
+		}
+
+			
+	/componentType {
+			
+        	nameInfo getAttributes
+  			TextAttributes begin
+			
+			attrib_vis {
+				gsave
+        		
+        		nameX nameY translate
+        		1 -1 scale % invert the context
+        		
+        		% choose font normal/bold/italic
+        		/AvanteGarde-Book attrib_size selectfont
+        		
+        		% rotate text context
+        		0 attrib_size neg moveto
+        	
+        		% draw the text
+        		name show
+        		
+        		grestore
+        	} if
+			end
+			
+       		
+        	idInfo getAttributes
+        	TextAttributes begin
+
+			attrib_vis {
+				gsave
+
+        		idX idY translate
+        		1 -1 scale % invert the context
+         		
+        		% choose font normal/bold/italic
+        		/AvanteGarde-Book attrib_size selectfont
+        		
+        		% rotate text context
+        		0 attrib_size neg moveto
+        	
+        		% draw the text
+        		id show
+        		
+        		grestore
+			} if
+			end
+			
+		}
+		
+	/pinType {
+				gsave
+				
+				x1 y1 translate
+				
+				% mark the pin
+				newpath
+				0 15 moveto
+				0 0 15 0 360 arc 
+				closepath stroke
+	 
+				pinNoAttrib getAttributes
+				TextAttributes begin
+	
+				attrib_vis {
+					
+					gsave % context for drawing pin number
+					
+					pinNoX pinNoY translate
+					1 -1 scale % invert the context
+					
+					% choose font normal/bold/italic
+					/AvanteGarde-Book attrib_size selectfont
+					
+					% rotate text context
+					0 attrib_size neg moveto
+				
+					% draw the text
+					pinNo =string cvs show
+					
+					grestore % pin number context
+				} if
+				end	% pin number attributes
+				
+				pinNameAttrib getAttributes
+				TextAttributes begin
+				attrib_vis {
+					gsave
+	
+					pinNameX pinNameY translate
+					1 -1 scale % invert the context
+					
+					% choose font normal/bold/italic
+					/AvanteGarde-Book attrib_size selectfont
+					
+					% rotate text context
+					0 attrib_size neg moveto
+				
+					% draw the text
+					pinName show
+					
+					grestore
+				} if			
+				end	
+	
+				
+				grestore % pin marking context
+				
+			}
+			
+	/edgesType {}
+	
+	/connectType {}
+	
+	/textType {
+				gsave
+					x1 y1 translate
+					1 -1 scale % invert the context
+					
+					% choose font normal/bold/italic
+					/AvanteGarde-Book attrib_size selectfont
+					
+					% rotate text context
+					0 attrib_size neg moveto
+				
+					% draw the text
+					displayText show
+				
+				grestore
+			}
+			
+	/lineType {
+				x1 y1 moveto
+				x2 y2 lineto stroke			
+        	}
+        	
+	/circleType {}
+	
+	/rectType {
+				x1 y1 x2 x1 sub y2 y1 sub rectstroke
+			}
+
+>> def
+
+/createAddGroup {
+	% creates or adds to a sub group keeping track of the bounding box
+	/objectDict exch def
+	
+	/groupRef subID =string cvs cvn def
+
+	subComponents groupRef 2 copy known {
+			get %existing component dictionary
+			begin
+					% calculate the new bounding box
+			objectDict begin
+			minX lbb1X min
+			minY lbb1Y min
+		
+			maxX lbb2X max
+			maxY lbb2Y max
+		
+			end
+	}{
+			10 dict dup 4 1 roll put % creates a new group dictionary
+			begin
+			objectDict begin
+			lbb1X lbb1Y
+			lbb2X lbb2Y
+			end
+			
+	} ifelse
+		/maxY exch def
+		/maxX exch def
+		
+		/minY exch def
+		/minX exch def
+
+		ref objectDict def 
+		
+	end
+} bind def
+
+
+
+/createComponents {
+	% this get called when entering a new sheet, at the termination of the parse, or on an error
+	
+	/components where {
+		pop
+		(processing components) =
+		%components dfa
+		% walk the tree of components
+		%components	dfa
+		
+		flushFlag render and {
+			currentSheet begin
+			renderers Object 2 copy known {
+				get exec
+			}{
+				pop pop
+			} ifelse
+		
+			components { 
+				dup type /dicttype eq {
+					begin
+
+					/ref objectId =string cvs cvn def  % get key to component group
+					
+					subComponents ref 2 copy known {
+					
+						% walk the group item tree
+						get 
+						dup % access the bounding box
+						begin 
+							1 0 0 setrgbcolor
+							minX minY maxX minX sub maxY minY sub rectstroke
+							minX minY moveto maxX maxY lineto stroke
+							
+						end
+						
+						{
+							dup type /dicttype eq {
+								begin
+					
+								0 0 0 setrgbcolor
+					
+								compType 2 eq {
+								
+								0 0 1 setrgbcolor
+								
+								} if
+					
+					
+								renderers Object 2 copy known {
+									get exec 
+								}{
+									(unable to render object.) =
+									pop pop
+								}ifelse
+								end
+							}{
+								pop %(ndt) print ==  
+							}ifelse
+							pop %(next) print ==
+						} forall
+						
+					}{
+						(Object: ) print =string cvs print
+						(not found in groups) =
+						pop
+					}ifelse
+
+					1 0 1 setrgbcolor
+
+					% render parent object
+					renderers Object 2 copy known {
+						get exec 
+					}{
+						(unable to render object.) =
+						pop pop
+					}ifelse
+							
+					end
+				}{
+					pop  % not a dictionary
+				}ifelse 
+				pop % the object reference ID
+			} forall
+				
+			end % components
+			
+			% draw unlinked strings
+			subComponents /0 2 copy known {
+				get {
+
+					dup type /dicttype eq {
+						begin
+		
+						0 0 0 setrgbcolor
+		
+						renderers Object 2 copy known {
+							get exec 
+						}{
+							(unable to render object.) =
+							pop pop
+						}ifelse
+						end
+					}{
+						pop  
+					}ifelse
+					pop					
+				} forall
+			}{
+				pop pop
+			}ifelse			
+		
+		} if  
+	}if	
+	
+	(creating new components list) =
+	% create a new components dictionary
+	/components 10 dict def
+
+
+} bind def
+
+/createWires {
+
+
+	/components where {
+		pop
+		(processing wires) =
+		%components dfa
+		% walk the tree of components
+		%components	dfa
+		
+		flushFlag render and {
+	
+			% connections -- list of objects in edges to connect
+			
+			% edges -- cloud of connected points
+	
+			connections {
+				dup type /dicttype eq {
+					begin
+					
+					edges y1 =string cvs cvn get	% get the first component loc
+					begin
+						x1 y1   	% start of wire
+					end
+		
+					edges x1 =string cvs cvn get	% get the first component loc
+					begin
+						x1 y1   	% start of wire
+					end
+					% create a wire object
+	
+					0 1 0 setrgbcolor
+	
+					moveto lineto stroke
+					
+					end	%  connections dictionary
+				}{
+					pop  % not a dictionary
+				}ifelse 
+				pop % the object reference ID
+		
+			} forall
+		}if
+	}if
+
+% protected void createWires()
+%  {
+%    Iterator localIterator = this.connections.keySet().iterator();
+%    while (localIterator.hasNext())
+%    {
+%      Object localObject = localIterator.next();
+%      Point localPoint1 = (Point)this.connections.get(localObject);
+%      Point localPoint2 = (Point)this.edges.get(new Integer(localPoint1.x));
+%      Point localPoint3 = (Point)this.edges.get(new Integer(localPoint1.y));
+%      Wire localWire = new Wire(localPoint2.x, localPoint2.y, localPoint3.x, localPoint3.y);
+%      this.currentSheet.add(localWire);
+%    }
+	(clearing wire defs) =
+%    this.edges.clear();
+	/edges 10 dict def
+
+%    this.connections.clear();
+	/connections 10 dict def
+
+%  }
+} bind def
+
+% component parse case dictionaries
+
+/parse_components << % >>
+
+	1	{ 
+		(component info) = 
+		% this is the grouped component record
+		
+		read1	% m  /compType 0 nil 1 sheet 2 component 3 symbol
+        
+        read3	verbose not {(might be link to first item: ) print ==}{pop}ifelse
+        
+        read1	% n (strlen)
+  		dup string /localStringBuffer3 exch def
+
+		0 1 3 -1 roll 1 sub {
+			localStringBuffer3 exch read1 put
+
+		} for 
+		% name (string)
+		localStringBuffer3    
+		verbose {(Name: ) print localStringBuffer3 =}if
+
+        read2	% i4 /nameInfo exch def
+        read3	% i6 /nameX exch def		
+        read3	% i8 /nameY exch def
+        
+        read1	% i9 (strlen)
+  		dup string /localStringBuffer5 exch def
+
+		0 1 3 -1 roll 1 sub {
+			localStringBuffer5 exch read1 put
+
+		} for 
+		%id (string)
+		localStringBuffer5 % this needs to be separated out in letter  number format
+		verbose {(ID: ) print localStringBuffer5 =}if
+		
+        read2	%	i11 /idInfo exch def
+		read3	%	i12 /idX exch def
+        read3	%	i13 /idY exch def
+                
+        read1		%	i14 (strlen)
+  		dup string /localStringBuffer6 exch def
+
+		0 1 3 -1 roll 1 sub {
+			localStringBuffer6 exch read1 put
+
+		} for 
+
+%		(order info: ) print 
+		localStringBuffer6
+
+		read2	verbose not {(skipped parameter: ) print ==}{pop}ifelse
+		
+		% information missing -- 
+		% component bounding box
+		% component orentation
+
+
+%        localObject2 = new ComponentInfo(
+%			 i, m, localStringBuffer3.toString(),
+%			 i4, i6, i8, localStringBuffer5.toString(),
+%			 i11, i12, i13, localStringBuffer6.toString());
+		
+		/localObject2 10 dict def
+		
+		
+		localObject2 begin
+			/objectId objectID def
+			/orderNo exch def
+			/idY exch def
+			/idX exch def
+			/idInfo exch def
+			/id exch def
+			/nameY exch def
+			/nameX exch def
+			/nameInfo exch def
+			/name exch def
+			/compType exch def
+			
+			/Object /componentType def
+		end
+		
+		localObject2 dfa
+		
+
+%        this.components.add(localObject2);
+		components objectID =string cvs cvn localObject2 put
+
+		
+	}
+
+	%2 not defined
+
+		3	{
+			(local pin) = 
+		
+			read1 verbose {(skipped parameter: ) print ==}{pop}ifelse % nominally 33
+				
+			read3	% m (pinX: ) print ==
+			read3	% n (pinY: ) print ==
+			
+			read1	% i2
+			dup string /localStringBuffer4 exch def
+	
+			0 1 3 -1 roll 1 sub {
+				localStringBuffer4 exch read1 put
+	
+			} for 
+	
+	%		(pinNameText: ) print 
+			localStringBuffer4
+					
+			read2	% 	i6	getAttributes
+			
+			read3	% 	i8	(textX: ) print ==
+			read3	% 	i9	(textY: ) print ==
+	
+			read2	% 	i10	(pinNo: ) print ==
+	  
+			read2	%	i11	getAttributes
+			
+			read3	%	i12 (textX: ) print ==
+			read3	%	i13 (textY: ) print ==
+	
+			read1	% i14
+			dup string /SkipBlock exch def
+	
+			0 1 3 -1 roll 1 sub {
+				SkipBlock exch read1 put
+	
+			} for 
+			
+			SkipBlock
+	
+	%		(skipped block: <) print SkipBlock $ print ( ) print SkipBlock ==
+		   
+			read2	verbose {(skipped parameter: ) print ==}{pop}ifelse
+	
+			/localPin 10 dict def
+			
+			localPin begin
+			
+			/objectId objectID def
+			
+			/netName exch def		% this may be netname
+			
+			/pinNoY exch def		% pin number text location
+			/pinNoX exch def
+			
+			/pinNoAttrib exch def	% pin number attributes
+			
+			/pinNo exch def			% the actual pin number
+			
+			/pinNameY exch def		% pin name text location
+			/pinNameX exch def	
+			
+			/pinNameAttrib exch def
+			
+			/pinName exch def 
+			
+			/y1 exch def
+			/x1 exch def
+			
+			/Object /pinType def	% set render key
+			
+			/lbb1X x1 def				% used to calculate bbox of grouped object
+			/lbb1Y y1 def
+	
+			/lbb2X x1 def
+			/lbb2Y y1 def
+	
+			end 
+			
+	%       this.edges.put(new Integer(i), new Point(m, n));
+			/ref objectID =string cvs cvn def
+			edges ref localPin put
+	
+	
+	%        Text localText2 = new Text(i8, i9, getAttributes(i6), localStringBuffer4.toString());
+	
+	%        localObject2 = new Text(i12, i13, getAttributes(i11), "" + i10);
+			
+	%        Pin localPin = new Pin(m, n, i10, localText2, (Text)localObject2);
+	
+			localPin dfa
+	
+	%        this.currentSheet.add(localPin);
+			currentSheet ref localPin put
+	
+	%        addSubComponent(this.subComponents, localPin, k);
+			localPin createAddGroup	
+			
+		}
+	
+	4	{
+			(edges point) = 
+			read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+			
+			read3	%	m
+			read3	%	n
+			
+%	        localPoint = new Point(m, n);
+			/localPoint 10 dict def
+			localPoint begin
+			/y1 exch def
+			/x1 exch def
+			
+			/Object /edgesType def
+			end
+		
+%	        this.edges.put(new Integer(i), localPoint);
+			edges objectID =string cvs cvn localPoint put
+		
+
+			localPoint dfa
+		
+		}
+	
+	5	{ 
+			(connections point) = 
+			
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+			
+			read3	%	m
+			read3	%	n
+			
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+			
+	%        localPoint = new Point(m, n);
+			/localPoint 10 dict def
+			localPoint begin
+			/y1 exch def
+			/x1 exch def
+			
+			/Object /connectType def
+
+			end
+
+	
+	%        this.connections.put(new Integer(i), localPoint);
+			connections objectID =string cvs cvn localPoint put
+
+			localPoint dfa
+			
+		}
+	
+	6	{ 
+			(text) =
+			
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+			
+			read1	%	m (strlen)
+			dup string /localStringBuffer1 exch def
+	
+			0 1 3 -1 roll 1 sub {
+				localStringBuffer1 exch read1 put
+	
+			} for 
+        
+			read2	%/i3 exch def
+			read1	% i8
+			
+			read3	% i9
+			read3	% i10
+	
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+	
+			/localText1 10 dict def
+			localText1 begin
+			/y1 exch def
+			/x1 exch def
+			/attrib_style exch def
+			/attrib_dir exch def 
+			
+			/attrib_size  attrib_dir 16 div def
+			/attrib_dir attrib_dir 16#0F and def
+	
+			/attrib_vis true def
+			
+			/displayText localStringBuffer1 def
+			
+			/Object /textType def
+			
+			/lbb1X x1 def
+			/lbb1Y y1 def
+			
+			
+			/lbb2Y lbb1Y attrib_size add def  % used for bbox calculations
+			
+			% enter a fictitious graphic state to calculate bbox widths
+			/AvanteGarde-Book attrib_size selectfont
+			/lbb2X lbb1X displayText stringwidth pop add def 
+			
+	
+			end
+        
+			localText1 dfa       
+        
+%       	 TextAttributes localTextAttributes = new TextAttributes(i6, i5, i8, true);
+        
+%       	Text localText1 = new Text(i9, i10, localTextAttributes, localStringBuffer1.toString());
+
+%       	this.currentSheet.add(localText1);
+			/ref objectID =string cvs cvn def
+			currentSheet ref localText1 put
+
+
+%        	addSubComponent(this.subComponents, localText1, k);
+			localText1 createAddGroup
+  
+		
+		}
+	
+	7	{
+	 		(rectangle ) =
+	 	
+			read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+
+			read3	% m (x1)
+			read3	% i1 (y1)
+			read3 	% i3 (x2)
+			read3	% i5  (y2)
+	
+			read2	verbose {(skipped parameter: ) print ==}{pop}ifelse
+	
+%    	    localObject1 = new Rectangle(m, i1, i3, i5);
+	
+			/localObject1 10 dict def
+			localObject1 begin
+			/y2 exch def % lrX
+			/x2 exch def % lrX
+			/y1 exch def % ulY
+			/x1 exch def % ulX
+			
+			/Object /rectType def
+	
+				% local bounding box 
+			/lbb1X	x1 x2 min def
+			/lbb1Y	y1 y2 min def
+					
+			/lbb2X	x1 x2 max def
+			/lbb2Y	y1 y2 max def		
+
+					
+			end
+				
+        	localObject1 dfa
+
+%   	    this.currentSheet.add((MutableTreeNode)localObject1);
+			/ref objectID =string cvs cvn def
+			currentSheet ref localObject1 put
+
+%	        addSubComponent(this.subComponents, (CircuitObject)localObject1, k);
+			localObject1 createAddGroup
+
+
+	}
+	
+	8	{ 
+		(line) = 
+	
+			read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+		
+	        read3	% m (x1)
+	        read3	% i1 (y1)
+	        read3 	% i3 (x2)
+        	read3	% i5  (y2)
+
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+           
+%		localObject1 = new Line(m, i1, i3, i5);
+			/localObject1 10 dict def
+			localObject1 begin
+			/y2 exch def
+			/x2 exch def
+			/y1 exch def
+			/x1 exch def 
+			
+			/Object /lineType def
+			
+			% local bounding box 
+			/lbb1X	x1 x2 min def
+			/lbb1Y	y1 y2 min def
+					
+			/lbb2X	x1 x2 max def
+			/lbb2Y	y1 y2 max def		
+					
+			end
+       	
+        	localObject1 dfa
+
+
+        
+%       this.currentSheet.add((MutableTreeNode)localObject1);
+			/ref objectID =string cvs cvn def
+			currentSheet ref localObject1 put
+
+%       addSubComponent(this.subComponents, (CircuitObject)localObject1, k);
+			localObject1 createAddGroup
+
+	}
+	
+	9	{
+		(circle) = 
+		
+			read1	% m
+
+	        read3	% i5         
+    	    read3	% i7 
+        
+        	read3	% i8 
+        
+        	read2 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        
+%        	Circle localCircle = new Circle(i5, i7, i1, i8, i3);
+        	/localCircle 10 dict def
+        	localCircle begin
+        
+        	/radius exch def
+      		/y1 exch def
+      		/x1 exch def
+      	
+      		/shape exch def
+      	
+      		/direction shape 32 div def
+      		/shape shape 16#0F and def
+      		
+      		/Object /circleType def
+      		
+ 
+  			% local bounding box 
+			/lbb1X	x1 radius sub def
+			/lbb1Y	y1 radius sub def
+					
+			/lbb2X	x1 radius add def
+			/lbb2Y	y1 radius add def	
+
+      	  
+       		end
+ 
+ 			localCircle dfa
+       
+
+%        this.currentSheet.add(localCircle);
+			/ref objectID =string cvs cvn def
+			currentSheet ref localCircle put
+
+
+%        addSubComponent(this.subComponents, localCircle, k);
+			localCircle createAddGroup
+  
+				
+		}
+	
+	% 10 .. 29 not defined
+
+	31	{ 
+		(Sheet) = 
+        
+        	createComponents
+ 
+        	createWires
+
+        	read1	%m
+			dup string /localStringBuffer2 exch def
+
+			0 1 3 -1 roll 1 sub {
+				localStringBuffer2 exch read1 put
+
+			} for 
+
+			localStringBuffer2
+
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read2 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read2 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        
+        	read3 	%i3
+        	read3 	%i5
+
+        read2 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read2 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+        read3 verbose {(skipped parameter: ) print ==}{pop}ifelse
+
+%       this.currentSheet = new Sheet(localStringBuffer2.toString(), i3, i5);
+		
+		%render the old sheet before creating a new one
+			flushFlag render and {showpage} if 
+		
+			(creating new flag) =
+			/flushFlag true def
+
+
+			/currentSheet 10 dict def
+			currentSheet begin
+		
+			/height exch def
+			/width exch def
+			/name exch def
+			
+			/Object /sheetType def
+		
+			end
+
+
+%       localCircuit.add(this.currentSheet);
+				
+						
+		}
+	
+	
+
+>> def
+
+/readComponents {
+
+	{
+		read3 /objectID exch def  % decode 3 bytes	
+		(\nobjectID: ) print objectID ==
+		
+		
+		read1 /switchObject exch def % decode one byte
+		verbose {(switch object: ) print switchObject ==} if
+		
+		
+		switchObject 30 eq {
+		(j30 exeption) =
+			createComponents
+		
+			% create wires
+			createWires
+		
+			% break
+			% in GS dictionaries persist
+			%/components where {/components undef} if
+			
+			render {showpage} if
+			
+			tfn status {
+			 pop pop
+			 tf fileposition sub /rbtr exch def
+			 pop
+			}if
+			
+			/xBytes rbtr  string def
+			
+			0 1 rbtr 1 sub {
+				xBytes exch read1 put
+			} for 
+			
+			%xBytes =$
+			%xBytes ==
+			
+			%tf 	rbtr string readstring {dup =$ =}if   % read plain text		
+			
+%			read1 16 =string cvrs print (h ) =
+			
+			exit
+		
+		} if
+		
+		read3 /subID exch def	 % k	
+		(subID: ) print subID ==
+		
+		
+		read3 verbose not {(might be link: ) print ==}{pop}ifelse
+
+		read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+		
+		parse_components switchObject 2 copy known {
+			
+			get exec
+			
+		}{
+			createComponents
+			%	createWires();
+			createWires
+     		(Unknown object type ) print == pop
+			render {showpage} if
+		
+		} ifelse
+		
+		
+	} loop
+
+	tf closefile
+
+} bind def
+
+% parse the file
+
+%jSchem reads first 26 bytes
+%xsch treats the first two bytes of the header as a version #
+
+
+
+	/tf tfn (r) file def
+
+% read the header string
+
+	/eHeader 12 string def
+
+	tf eHeader readstring {(raw header: <) print =$}{( failed to read header) = exit} ifelse 
+	
+	Word_l$ 1 eHeader 0 2 getinterval putinterval Word_l$ cvx exec
+	/fileFormat exch def 	
+	(file format: ) print fileFormat 16 =string cvrs print (h ) print fileFormat ==
+
+	fileFormat FPTFILE ne {
+		tf 14 string readstring {(14 bytes: ) print =$}{( failed to read header) = exit} ifelse 
+	}{
+		(\nFootprint component file) =
+	} ifelse	
+
+	initIO	% reads the key from the file header
+
+	fileFormat SCHFILE eq {
+		% schematic file
+		(\nschematic file) =
+		
+		% reads 4 throwaway bytes from header
+		tf 4 string readstring {(4byte: <) print =$}{ (failed to read header substring) = exit} ifelse
+	} if 
+	
+	fileFormat PCBFILE eq {
+		% circuit board file
+		(\nPCB file) =
+	
+	}if
+	
+	% reset
+	% sub components	-- these are groups
+	/subComponents 10 dict def		
+	
+	% edges
+	/edges 10 dict def			% point cloud of wire edges
+	
+	%connections 
+	/connections 10 dict def	% two connected object IDs
+
+	% components (array)		% scaled an rotated component info
+	/components 10 dict def
+
+	
+	fileFormat CMPFILE eq {
+		(\nSchematic component file) =
+		% referred to as a compound object
+
+		/currentSheet 10 dict def
+		currentSheet begin
+		
+		/height 10000 def
+		/width 10000 def
+		/name (temp) def
+		
+		/Object /sheetType def
+
+	}if
+	
+	fileFormat PCBFILE ne {
+	
+		readComponents
+	
+	}if
+
+
+
+
