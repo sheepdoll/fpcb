@@ -1,0 +1,5049 @@
+%!PS
+
+% deconstructed writer for express pcb files
+
+% reads kicad files, produces netlist, layout
+
+% requires ghostscript min and max functions
+
+
+% project notes
+
+% are zones naturally ground planes
+% fix keepout zones
+
+% $DRAWSEGMENT is the true board outline
+
+% arcs still need work
+
+
+cleardictstack
+/tfd (pcbNew.kicad_pcb) def
+
+%-------------------------------------------------------------------------
+
+/KiCadDataFolderPfx (KiCad/myFiles/) def % change this to the full path where the 
+						% converted files will be stored.  Must be full path from
+						% top file directory, or files will be stored
+						% in the conversion source directory. Directory must exist.
+
+
+/verbose false def % return debug data on back channel
+
+/render true def % render the schematic to the postscript page
+
+/writefiles true def
+
+/ddnetlist 1 def   % 0 do not echo netlist 1 echo netlist 2 write netlist to file
+
+/LayerCount 2 def	% this is no longer defined in the KiCad file
+					%	in practice ExpressPCB only supports zones
+					%	on the inside layers. so there is not
+					%	much reason to support other than 2 layers
+
+/DisplayFont /LucidaGrande def 
+%/URWGothicL-Book def
+%DisplayFont /AvanteGarde-Book /URWGothicL-Book def
+
+
+% no user settings past this point
+
+%######################################################################
+
+
+/=$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile =} bind def
+
+/$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile } bind def
+
+%/dfa {pop} bind def  %
+/dfa {( << %>) = { (\t/) print exch =string cvs print ( ) print ==} forall (>> def) =} bind def
+
+
+/Word_l$ <870000> def			% low first
+/Long_l$ <8500000000> def		% low first
+
+/Word$ <860000> def			% high first
+/Long$ <8400000000> def		% high first
+
+
+/pHex { 2 string dup 0 (00) putinterval dup 3 -1 roll 16#FF and 16 =string cvrs 2 1 index length sub exch putinterval } bind def
+
+/pWord { 4 string dup 0 (0000) putinterval dup 3 -1 roll 16#FFFF and 16 =string cvrs 4 1 index length sub exch putinterval } bind def
+
+/pAddr { 6 string dup 0 (000000) putinterval dup 3 -1 roll 16#FFFFFF and 16 =string cvrs 6 1 index length sub exch putinterval } bind def
+
+/pLong { 8 string dup 0 (00000000) putinterval dup 3 -1 roll 16#FFFFFFFF and 16 =string cvrs 8 1 index length sub exch putinterval } bind def
+
+
+/pBin { 8 string dup 0 (00000000) putinterval dup 3 -1 roll 2 =string cvrs 8 1 index length sub exch putinterval } bind def
+
+/ljust {cvi 16#FF and dup 128 ge {16#FF xor not} if 
+		4 string dup 0 (    ) putinterval dup 3 -1 roll cvi =string cvs 0 exch putinterval } bind def
+
+
+/makestring { 
+	%verbose 2 gt {(<) print =$} if
+	dup length string       % new string of right size
+	dup /NullEncode filter      % make a file out of string
+	2 index                 % array to stack top
+    { 2 copy write pop }         % integers to string
+	forall
+    flushfile exch pop                   % clean up
+} bind def
+
+/strcat {
+	dup length 2 index length add string
+	2 index length 3 -1 roll 3 copy putinterval pop pop 
+	0 3 -1 roll 3 copy putinterval pop pop 
+
+} bind def
+
+/qdbp {
+% quick and dirty binary print
+ 16#10000 or 2 =string cvrs 1 16 getinterval
+} bind def
+
+
+/flushFlag false def  % only render on exit
+
+/sheetCount 1 def 
+
+% level2 date function
+(%Calendar%) /IODevice resourcestatus {
+	pop pop (%Calendar%) currentdevparams
+	dup /Running get { /timedict exch def
+		[ 
+     	timedict /Year get 4 string cvs {} forall 45
+     	timedict /Month get 2 string cvs {} forall 45
+     	timedict /Day get 2 string cvs {} forall 32
+     	timedict /Hour get 2 string cvs {} forall 58
+     	timedict /Minute get 100 add 3 string cvs 1 2 getinterval {} forall 58
+     	timedict /Second get 100 add 3 string cvs 1 2 getinterval {} forall
+     	]
+		makestring dup == /StartTime$ exch def
+	}{
+     (Clock/calendar is present but not running.\n) print
+   } ifelse
+ } {
+   (No clock/calendar present.\n) print
+ } ifelse
+
+
+%quick and dirty proc for making a sort of timestamp
+/TimeHashes 10 dict def
+%quick and dirty proc for making a sort of timestamp
+/TimeStamp {
+
+(%Calendar%) currentdevparams begin
+10 dict begin  % make a local dictionary for constants
+/SEC_PER_HOUR 60 60 mul def
+/SEC_PER_DAY SEC_PER_HOUR 24 mul def 
+/SEC_IN_MONTH [0 2678400 5097600 7776000 10368000 13046400 15638400 18316800 20995200 23587200 26265600 28857600] def
+
+Year 1970 sub 365.2425 mul SEC_PER_DAY mul cvi % approximate the number of seconds since 0 time
+SEC_IN_MONTH Month 1 sub get cvi add  % add in the seconds to the first of the month
+Day 1 sub SEC_PER_DAY mul cvi add % seconds to midnight the prior day
+Hour SEC_PER_HOUR mul cvi add
+Minute 60 mul cvi add
+%	(->) print pstack (<-) =	
+Second add 
+%	(->) print pstack (<-) =	
+cvi dup 16 8 string cvrs exch
+
+end
+{
+	1 index cvn TimeHashes exch 2 copy known
+	{
+	%(y->) print pstack (<-) = flush
+		get 1 add 
+		cvi dup 16 8 string cvrs exch
+		4 -2 roll pop pop %put
+	
+	
+	%(y->) print pstack (<-) = flush
+	}{
+	%(n->) print pstack (<-) = flush
+		3 -1 roll put exit
+	%(n->) print pstack (<-) = flush
+	}ifelse
+} loop
+end
+} bind def
+% functions for decoding the input stream
+
+/isNumber << % >>
+	/48 0
+	/49	1
+	/50	2
+	/51	3
+	/52	4
+	/53	5
+	/54	6
+	/55	7
+	/56 8
+	/57 9
+>> def
+
+
+/fix_parameter {
+	% convert number from metric to
+	% inches1000
+
+	% could get fancy with type checking the parameter
+	dup type /stringtype eq {
+		% let the interpreter do most of the conversion
+		cvx exec 25.4 div 1000 mul .5 add cvi
+	}{
+(% not a string number) =
+pstack
+stop
+
+	}ifelse
+
+}def
+
+/invalid %(/\\:*?"<>|) 
+<<47 95 92 95 58 95 42 95 63 95 34 95 60 95 62 95 124 95 >>
+def
+
+
+
+
+/putItem {
+	10 dict begin
+	/k exch def
+	cvi /i exch def
+	
+	2 setobjectformat
+	/ts 12 string def
+	/of ts /NullEncode filter def
+	of i 0 writeobject
+	of flushfile
+	ts 8 k getinterval
+	end
+} bind def
+
+
+/key_hashes << % >
+	/refName /hashesIDX
+	/next_hash 0 
+>> def
+
+/linkParameters << % >
+	/refName /linkIDX
+	/refcount 0 
+>> def 
+
+
+/NewLink {
+
+	/Object exch def
+	/group exch def
+	/hasnext exch def
+
+	linkParameters begin
+		/refcount refcount 1 add def
+		refcount
+	end 
+	/self exch def
+
+%currentdict dfa
+%(???) =
+%pstack
+
+	% may want to devolve this	
+	% to use <object>Type enumerators
+	hasnext {
+		/next self 1 add def		
+	}{	
+		/next 0 def
+	} ifelse
+%	/group 0 def
+	/parent 0 def
+	
+	
+	(s: ) print self =string cvs print
+	( c: ) print Object =string cvs print
+	( g: ) print group =string cvs print
+	( n: ) print next ==
+	
+	self 	3 putItem print_pcbfile
+	Object	1 putItem print_pcbfile
+	group 	3 putItem print_pcbfile
+	next 	3 putItem print_pcbfile
+
+} def
+
+/LineWidthMap [ 0 10 12 15 20 25 30 40 50 60 80 100 120 150 8 7 200 250 6 ] def
+% forward map	/traceThick LineWidthMap traceWidth get def
+
+/textSizeFilter [38 40 45 50 60 70 80 90 100 110 125 150 175 200 225 250 300 350 400 500 ] def
+
+
+% epcb hole size limit table
+/drillLimit [ 
+ 0   14  20  25  29  33  35  40
+ 43  46  52  61  67  79  88  93
+100 110 125 141 150 167 192 251 
+] def
+
+/revMapdrill [
+ 0  200	260	310 350 390 420 465
+492 520	595	670 730	860 935	995
+1065 1160 1319 1470	1570 1730 1990 2570
+] def
+
+
+/revRotate 	<< % >
+	-360	0
+	-270	3	
+	-180	2	
+	-90		1
+	0		0
+	90		1
+	180		2
+	270		3
+	360		0
+>> def
+
+%back draw arcs
+/ARC_ANGLE [ 360.0 300.0 210.0 180.0 90.0 -90.0 ] def
+
+/ARC_SHAPE [[0 360.0] [120.0 60.0]  [165.0 15.0]  [180.1 359.9] [225.0 315.0] [270.0 0]] def
+
+/K_ARC_DIRECTION [
+%    360       300          210           180           0/45       90/0 
+	[[0 360.0] [ 120.0 600] [165.0  15.0] [180.1 359.9] [225.0 315.0] [  0    90.0]] % 0
+	[[0 360.0] [210.0 1500] [255.0 105.0] [270.1  89.9] [315.0  45.0] [ 90.0 180.0]] % 90
+	[[0 360.0] [300.0 2400] [345.0 195.0] [  1   179.9] [ 45.0 135.0] [180.0 270.0]] % 180
+	[[0 360.0] [ 30.0 3300] [ 75.0 285.0] [ 90.1 269.9] [135.0 225.0] [270.0   0  ]] % 270
+] def
+
+
+% anular ring copper limit 0.017
+
+% hole clearance 0.021
+% edge clearance 0.025
+
+
+% kiCad layer mapping
+
+% 0 Copper layer
+% 1 to 14 Inner layers
+% 15 Component layer
+
+%Technical layers
+
+%16 Copper side adhesive layer
+%17 Component side adhesive layer
+%18 Copper side Solder paste layer
+%19 Component Solder paste layer
+
+
+%20 Copper side Silk screen layer
+%21 Component Silk screen layer
+
+%22 Copper side Solder mask layer
+%23 Component Solder mask layer
+%24 Draw layer (Used for general drawings)
+%25 Comment layer (Other layer used for general drawings)
+%26 ECO1 layer (Other layer used for general drawings)
+%27 ECO2 layer (Other layer used for general drawings)
+%28 Edge layer. Items on Edge layer are seen on all layers
+%29 Not yet used
+%30 Not yet used
+%31 Not yet used
+
+/layerMap << % >>
+
+	21 2 % top silk screen
+	
+	0 20 % bottom copper	
+	15 10 % component
+
+>> def
+
+/layerMap2 << % >
+	
+	/F.Cu 10
+	/B.Cu 20
+	/*.Cu 100
+	
+	/F.SilkS 2
+	
+	/Front 10
+	/Back 20
+
+>> def
+
+
+
+/optionsPAD << % > 
+	/thru_hole {
+		attribShape 2 eq {
+
+		gsave
+		
+		233 255 div 150 255 div 122 255 div setrgbcolor
+		x1 y1 padWidth 2 div 0 360 arc fill
+
+		0 1 1 setrgbcolor
+		x1 y1 drillLimit padDrillIdx 1 add get 17 add
+		2 div 0 360 arc fill
+
+		
+		1 1 0 setrgbcolor
+		x1 y1 drillLimit padDrillIdx 1 add get
+		2 div 0 360 arc fill
+		
+		0 0 0 setrgbcolor
+		x1 y1 padDrill 2 div 0 360 arc fill
+	
+		
+		grestore
+		} if
+
+		attribShape 3 eq {
+
+		gsave
+		
+		gsave
+		233 255 div 150 255 div 122 255 div setrgbcolor
+		x1 y1 translate
+		padWidth neg 2 div padHeight neg 2 div padWidth padHeight rectfill
+		grestore
+		
+		0 1 1 setrgbcolor
+		x1 y1 drillLimit padDrillIdx 1 add get 17 add
+		2 div 0 360 arc fill
+
+		
+		1 1 0 setrgbcolor
+		x1 y1 drillLimit padDrillIdx 1 add get
+		2 div 0 360 arc fill
+		
+		0 0 0 setrgbcolor
+		x1 y1 padDrill 2 div 0 360 arc fill
+	
+		
+		grestore
+		} if
+
+		
+		
+	} 
+
+	/smd {
+		% need to check layer map for color
+		
+render {
+		gsave
+		
+%		1 setgray
+		
+%		x1 y1 moveto 0 3000 rlineto stroke
+		
+		x1 y1 translate
+		
+verbose {
+(surface mount pad: ) =
+(angle: ) print padAngle ==
+		%(layers: 0x) print padLayerMap 16 8 string cvrs =
+} if
+		%(b: ) print padLayerMap 1 and ==
+		
+		%(c: ) print 
+		
+		padLayers 10 eq {
+		
+			233 255 div 150 255 div 122 255 div setrgbcolor
+		}{
+			123 255 div 104 255 div 238 255 div setrgbcolor
+		} ifelse
+		
+		%angle rotate
+		padAngle rotate
+
+		padWidth neg 2 div padHeight neg 2 div padWidth padHeight rectfill
+
+		0 0 0 setrgbcolor
+		0 setlinewidth
+
+		padWidth neg 2 div 0 moveto padWidth  2 div 0 lineto stroke
+		0 padHeight neg 2 div moveto 0 padHeight 2 div lineto stroke
+
+		%	 -30 0 moveto 30 0 lineto stroke				% mark new origin
+		%	 0 -30 moveto 0 30 lineto stroke
+		
+		newpath
+		0 padHeight 2 div moveto
+		-3 -7 rlineto
+		6 0 rlineto
+		closepath fill
+		%-30 70 rlineto stroke
+
+		grestore
+} if	
+
+	}
+	dup /CONN exch
+	
+	/HOLE {
+
+render {
+	gsave
+		0 1 1 setrgbcolor
+		x1 y1 drillLimit padDrillIdx 1 add get 17 add
+		
+		/padWidth exch def
+		/padHeight padWidth def
+		
+		%(Hole: ) print padWidth ==
+		%padHeight ==
+		
+		padWidth 2 div 0 360 arc fill
+
+		1 1 0 setrgbcolor
+		x1 y1 drillLimit padDrillIdx 1 add get
+		2 div 0 360 arc fill
+	grestore
+} if
+
+	}
+	dup /MECA exch 
+
+>> def
+
+/commandsPad << % >	
+										
+	/Sh {
+(Shape: ) print %<pad name> shape Xsize Ysize Xdelta Ydelta Orientation
+		%"1" O 740 740 0 0 900
+		quoteText /padIDTxt exch def
+padIDTxt print
+( ) print
+		tf token {/padShape exch def} if
+(shape: ) print /padShape load =string cvs print
+		tf token {10 div /padWidth exch def} if
+		tf token {10 div /padHeight exch def} if
+		tf token {10 div /padXdelta exch def} if
+		tf token {10 div /padYdelta exch def} if
+		tf token {10 div /padAngle exch def} if
+		%currentdict dfa
+
+		% need to update the number of pads in the parent
+		% dictionary
+
+		% how to deal with pins what are not numbers		
+		% specifically A and C or K on diodes
+		
+		currentdict end  
+		/padCount padCount 1 add def
+		begin 
+		% we now return to our regularly scheduled dictionary
+		
+		% convert the pad here once
+		padIDTxt length 0 gt {	
+			padIDTxt cvx {exec} stopped {
+			padCount
+(# NAN: ") print padIDTxt print (" pad count: ) print dup ==
+			}if
+			% converted pin number is on stack
+		}{
+			padCount
+(# empty pad name: ") print padIDTxt print (" pad count: ) print dup ==
+		}ifelse
+		/padIDNum exch def
+%(pin number: ) print padIDNum ==
+		
+%(pad shape: ) print /padShape load ==		
+		10 dict begin
+		/C {2} def
+		/R {4} def
+		
+		/O {2} def	% can special case these as buildups
+		/T {2} def	% could do this as a built up pad 
+		
+		padShape 
+		end
+		/attribShape exch def
+
+( attribute shape: ) print attribShape ==
+
+
+		
+	} 
+
+	/Dr {
+		%Drill <Pad drill> Xoffset Yoffset (round hole)
+		tf token {10 div /padDrill exch def} if
+		[
+			2 {
+				tf token {10 div } if
+			}repeat
+			
+		]
+		/padOffset exch def
+		
+%		(drill size: ) print padDrill ==
+		
+
+		0 1 drillLimit length 2 sub {
+			/padDrillIdx exch def
+			
+			padDrill 0 eq {exit} if
+			
+			padDrill drillLimit padDrillIdx get gt 
+			padDrill drillLimit padDrillIdx 1 add get le  
+			and {exit}if
+	
+		}for
+
+%		(drill index: ) print padDrillIdx  ==
+		
+%		(drill map: ) print drillLimit padDrillIdx 1 add get ==
+
+		
+	}
+	
+	% or 
+	%<Hole shape> <Pad drill.x> <Pad drill.y>
+	/O {tf 72 string readline pop pop} 
+
+	/At {
+(Attributs: ) print %<Pad type> N <layer mask>
+	%STD N 00C0FFFF
+		tf token {/padAttributs exch def} if
+/padAttributs load =string cvs print
+		tf token {pop} if % the N parameter
+
+		tf 4 string readhexstring {
+		Long$ 1 3 -1 roll putinterval 
+		%(-> ) print pstack (<-) = flush
+		Long$ cvx exec
+		}{ 0 }ifelse
+
+		/padLayerMap exch def
+( 16#) print 	padLayerMap 16 =string cvrs =	
+		
+		10 dict begin
+
+			/STD {
+				% change shape from SMD to STD for square pads
+				attribShape 4 eq {
+					currentdict end
+					/attribShape 3 def
+					begin
+				}if 
+			
+			100
+			
+			} def
+			
+			/SMD {
+
+				padLayerMap 16#8001 and 16#8001 eq {
+					100		
+				}{
+					padLayerMap 16#8000 and 0 eq {
+			 			20 
+					}{
+						10 
+					}ifelse
+				}ifelse
+			} def
+			
+			/CONN {100} def
+			/HOLE {100} def
+			/MECA {100} def
+			
+			padAttributs
+		end
+		/padLayers exch def
+		
+		(pad layer attributes: ) print padLayers ==
+
+	}
+
+	/Ne {
+	%Net reference of the pad: <netnumber> <net name>
+	%27 "MISO"
+		tf token {
+			/netIdx exch def
+		} if
+		quoteText /netTxt exch def
+
+	}
+	
+	/.SolderMask {tf 72 string readline pop pop}
+	dup /.SolderPaste exch
+	
+	/Po { %-1000 500
+
+			tf token {
+				10 div /padX exch def
+			}if
+
+			tf token {
+				10 div /padY exch def
+			}if
+
+			padX padY moduleMatrix itransform 
+			/y1 exch def /x1 exch def
+			
+
+
+	}
+
+	/$EndPAD {
+	
+
+		 % render or translate Pad dict here
+
+		% need to fix to add detection of square pads
+		% and round smt (bga) pads
+
+
+		optionsPAD /padAttributs load 2 copy known {
+			get exec
+		}{
+			pop pop
+			/attribShape 1 def
+render {
+gsave
+-30 0 moveto 30 0 lineto stroke				% mark new origin
+0 -30 moveto 0 30 lineto stroke
+grestore
+}if
+		}ifelse
+
+
+		% pack attributes into word
+		/var_2C attribShape revRotate padAngle get 4 bitshift or padLayers 6 bitshift or  def
+				 
+		% need to flag this pad as an edge in the corners table
+		/edgeReverse 
+		x1 cvi 10 string cvs
+		(_) strcat 
+		y1 cvi 10 string cvs 
+		strcat cvn def
+
+		CornerReverse edgeReverse 2 copy known {
+(# edge overlap: ) print get ==
+			% overlapping edges
+			% can happen when a surface pad overlaps
+			% a pad used as a via
+			
+			% currently we only track one marker per edge
+		}{
+verbose {(new edge: ) print self =string cvs print ( ) print edgeReverse ==} if
+			self put  % mark edge as busy
+					  % may have to deal with layers when SMT pads are
+					  % used
+		}ifelse
+		
+		self
+		currentdict
+		end
+		Board 3 1 roll put	
+
+
+
+		% layer interconnects need to relate to named Zone and 
+		% the netlist reference 
+/tabs tabs 1 sub def
+tabs {( ) print} repeat
+($EndPAD) =
+
+		exit
+		 			
+	}
+
+
+
+>> def
+
+/commandsModule << % >
+	/Po {
+		%Po Xpos  Ypos  Orientation(0.1deg) Layer TimeStamp         Attribut1Attribut2
+		%   41500 30855 900                 15    00000000 00000000 ~~
+		
+			tf token {
+				10 div /centerX exch def
+			}if
+
+			tf token {
+				10 div /centerY exch def
+			}if
+
+			tf token {
+				10 div /angle exch def
+			}if
+
+			tf token {
+				/layer exch def
+			}if
+
+			
+			centerX centerY localMatrix itransform 
+			/y1 exch def /x1 exch def
+			
+			1 1 1 setrgbcolor
+			
+			0 setlinewidth
+			
+			x1 neg y1 neg matrix translate
+			angle matrix rotate 
+			matrix concatmatrix
+			/moduleMatrix exch def
+
+			-70 0 moduleMatrix itransform moveto 70 0 moduleMatrix itransform lineto stroke				% mark new origin
+			0 -100 moduleMatrix itransform moveto 0 100 moduleMatrix itransform lineto stroke
+
+			0 100 moduleMatrix itransform moveto
+			-30 30 moduleMatrix itransform lineto
+			30 30 moduleMatrix itransform lineto
+			0 100 moduleMatrix itransform lineto
+			stroke
+		
+			tf 72 string readline { /attributes exch def} if
+		
+		%currentdict
+		%dfa
+		
+	} 
+	
+	/Li	{	%library name
+		% use this for a part name if the comment description
+		% is not in the module name
+		tf 72 string readline {
+verbose {(library part name: ) print }if
+			[ exch 
+				{invalid 1 index known {pop 95}if} forall
+			] makestring 
+verbose {dup  ==} if
+			/command load exch def
+		}if
+	} 
+	
+	/Sc	{tf 72 string readline pop pop} %Timestamp
+	dup /Op	exch 						%rotation cost factors
+	dup /Kw exch						% keyword
+
+	/Cd {	%comment description
+		% this is the best field to store as the part name
+		% in the file
+		tf 72 string readline {
+verbose {(comment description name: ) print} if
+			[ exch 
+				{invalid 1 index known {pop 95}if} forall
+			] makestring 
+verbose {dup ==}if
+			/command load exch def
+		}if 
+	} 						
+
+	% field descriptors
+	 /T0 {fieldParameters}	% this is the part ref 
+	dup /T1	exch 			% part value, not to be confused with the part name
+	dup /T2	exch 			% typically extra comment description
+
+	/DS	{ % draw segment
+		%DS Xstart Ystart Xend Yend Width Layer
+		/segmentCount segmentCount 1 add def
+	
+		10 dict begin
+						
+		tf token {
+			10 div /xStart exch def
+		}if
+		 
+		tf token {
+			10 div /yStart exch def
+		}if
+		 
+		tf token {
+			10 div /xEnd exch def
+		}if
+		 
+		tf token {
+			10 div /yEnd exch def
+		}if 
+		
+		tf token {
+			10 div /lineThickness exch def
+			% may have to manage valid line widths
+		}if 
+		
+		tf token {
+			/lineLayer exch def
+		}if 
+
+		%(segment dict:) print currentdict dfa
+
+		lineLayer 21 eq {
+			%(silk module) =	
+			localModule begin
+			/linkCount linkCount 1 add def
+		
+			linkCount
+			end		
+			/linkCount exch def % use this for pin number when pin number is text
+						
+			9 NewLink
+
+			% update the local linked list
+			linkCount 1 eq {
+				localModule /firstLink self put
+				%(new root: ) print self ==
+			}{
+				% simple method without search links are added in order
+				% to the prior reference
+				self
+				Board self 1 sub get begin
+				/next exch def
+				%( n: ) print next =string cvs print
+				end
+			} ifelse
+			
+			% must be layer
+			%read1 (layer: )
+	
+			% start and end points
+			%read3 (x1: )
+			%read3 (y1: )
+			xStart yStart moduleMatrix itransform 
+			/y1 exch def /x1 exch def
+
+			%read3 (x2: )
+			%read3 (y2: )
+			xEnd yEnd moduleMatrix itransform 
+			/y2 exch def /x2 exch def
+	
+			% thickness
+			%read3 (t: )
+	
+			self
+			currentdict
+			end % working temp dict
+			Board 3 1 roll put
+		}{
+			end
+		}ifelse
+
+	} 
+	
+	/DC {
+		 % draw circle
+		 %DC <Xcentre> <Ycentre> <Xpoint> <Ypoint> <Width> <Layer>
+%verbose {(drawing circle: ) =} if
+		10 dict begin
+						
+		tf token {
+			10 div /Xcentre exch def
+		}if
+		 
+		tf token {
+			10 div /Ycentre exch def
+		}if
+		 
+		tf token {
+			10 div /Xpoint exch def
+		}if
+		 
+		tf token {
+			10 div /Ypoint exch def
+		}if 
+		
+		tf token {
+			10 div /lineThickness exch def
+			% may have to manage valid line widths
+		}if 
+		
+		tf token {
+			/lineLayer exch def
+		}if 
+		%lineLayer 21 eq 
+		layerMap lineLayer known {
+			%(silk module) =	
+			localModule begin
+			/linkCount linkCount 1 add def
+		
+			linkCount
+			end		
+			/linkCount exch def % use this for pin number when pin number is text
+						
+			10 NewLink
+
+			% update the local linked list
+			linkCount 1 eq {
+				localModule /firstLink self put
+				%(new root: ) print self ==
+			}{
+				% simple method without search links are added in order
+				% to the prior reference
+				self
+				Board self 1 sub get begin
+				/next exch def
+				%( n: ) print next =string cvs print
+				end
+			} ifelse
+
+
+		%	10: arc
+		%	key1: attributes
+		%		shape always 1 for circle
+			/shape 1 def
+		%		dir rotation is 1 for circle 
+			/arcrotation 1 def 
+		%	key3: positionX
+		%	key3: positionY
+			Xcentre Ycentre moduleMatrix itransform 
+			/y1 exch def /x1 exch def
+
+		%	key3: radius
+		
+		%d = SQRT((x2-x1)2+(y2-y1)2) 
+		/radius
+		Xpoint Xcentre sub dup mul
+		Ypoint Ycentre sub dup mul
+		add sqrt def
+				
+render {
+		%	key3: linewith
+		1 255 215 div 0 setrgbcolor		
+		%	key1: layer
+		lineThickness setlinewidth
+			
+		Xpoint Ypoint moduleMatrix itransform moveto 
+		x1 y1 radius 0 360 arc stroke
+}if
+
+			self
+			currentdict
+			end % working temp dict
+			Board 3 1 roll put
+
+		}{
+			end
+		}ifelse
+	
+	}
+	/DA	{
+		 % draw arc 
+		 %DC <Xcentre> <Ycentre> <Xpoint> <Ypoint>  <angle> <width> <layer>
+
+%verbose {(\ndrawing arc: ) =} if
+		10 dict begin
+						
+		tf token {
+			10 div /Xcentre exch def
+		}if
+		 
+		tf token {
+			10 div /Ycentre exch def
+		}if
+		 
+		tf token {
+			10 div /Xpoint exch def
+		}if
+		 
+		tf token {
+			10 div /Ypoint exch def
+		}if 
+
+		tf token {
+			10 div /arcangle exch def
+		}if 
+	
+		tf token {
+			10 div /lineThickness exch def
+			% may have to manage valid line widths
+		}if 
+		
+		tf token {
+			/lineLayer exch def
+		}if 
+		%lineLayer 21 eq 
+		layerMap lineLayer known {
+			%(silk module) =	
+			localModule begin
+			/linkCount linkCount 1 add def
+		
+			linkCount
+			end		
+			/linkCount exch def % use this for pin number when pin number is text
+						
+			10 NewLink
+
+			% update the local linked list
+			linkCount 1 eq {
+				localModule /firstLink self put
+				%(new root: ) print self ==
+			}{
+				% simple method without search links are added in order
+				% to the prior reference
+				self
+				Board self 1 sub get begin
+				/next exch def
+				%( n: ) print next =string cvs print
+				end
+			} ifelse
+
+
+		%	10: arc
+		%	key1: attributes
+		%		shape 
+		% limit to [360 300 210 180 90 or 90 corner]
+
+		arcangle abs 90 le {
+			
+			/shape 5 def
+		}
+		{
+			arcangle abs 180 le {/shape 4 def}
+			{
+				arcangle abs 210 le {/shape 3 def}
+				{
+					arcangle abs 300 le {/shape 3 def}
+					{
+						/shape 1 def
+					} ifelse
+				} ifelse
+			} ifelse
+		}ifelse
+
+		%		dir rotation is [0 90 180 270]
+		
+		% gets complex as there is need to template map the
+		% arcs to the limits above
+		
+		%	key3: positionX
+		%	key3: positionY
+			Xcentre Ycentre moduleMatrix itransform 
+			/y1 exch def /x1 exch def
+%verbose {(center: ) print Xcentre Ycentre exch =string cvs print (, ) print == } if
+
+		%	key3: radius
+		%d = SQRT((x2-x1)2+(y2-y1)2) 
+		/radius
+		Xpoint Xcentre sub dup mul
+		Ypoint Ycentre sub dup mul
+		add sqrt def
+%verbose {(radius: ) print radius ==}if
+	
+		%	key3: linewith
+		lineThickness setlinewidth
+
+		%	key1: layer
+		%1 255 215 div 0 setrgbcolor		
+
+		/arcTangent Ypoint Ycentre sub  Xpoint Xcentre sub atan def
+%verbose {
+%(point 1: ) print Xpoint Ypoint exch =string cvs print (, ) print ==
+%(angle: ) print angle ==
+%(atan of point 1: ) print  arcTangent ==
+%} if	
+		% remove part rotation from angle
+		/refangle  arcTangent angle add def %
+		{
+			refangle 360 lt {exit} if
+			/refangle refangle 360 sub def
+		}loop
+		
+%verbose {
+%(reference angle : ) print refangle ==
+%(shape: ) print shape ==
+%} if
+		% adjust for corners
+		shape 5 eq {
+			<< 0 3 90 4 180 1 270 2 >>
+			refangle abs cvi 2 copy known {
+				get /arcrotation exch def
+				/shape 6 def
+				arcangle 0 lt {
+					/arcrotation arcrotation 1 sub def
+					arcrotation 0 eq {/arcrotation 4 def}if
+				}if
+			}{
+				pop pop
+				/arcrotation 1 def
+			}ifelse
+		}{
+			refangle abs 90 lt {/arcrotation 2 def}
+			{
+				refangle abs 180 lt {/arcrotation 2 def}
+				{
+					refangle abs 270 lt {/arcrotation 3 def}
+					{
+						refangle abs 360 lt {/arcrotation 4 def}
+						{
+							/arcrotation 1 def
+						} ifelse
+					} ifelse
+				} ifelse
+			}ifelse
+		}ifelse
+
+% fix for negative arcs
+		arcangle cvi -180 eq {
+			/arcrotation arcrotation 2 sub def
+			arcrotation 0 le {
+				/arcrotation arcrotation 4 add def
+			}if
+			
+		}if 
+
+%verbose {(arcrotation: ) print arcrotation ==}if	
+
+		Xpoint Ypoint moduleMatrix itransform moveto 
+		gsave
+		% CTM affects on display are not tracked in local matrix
+		x1 y1 translate refangle angle add rotate  
+
+		0 0 radius 0 arcangle
+		 arc stroke
+
+		grestore
+
+		1 0 255 215 div  setrgbcolor		
+
+		x1 y1 moveto
+		Xpoint Ypoint moduleMatrix itransform  
+		lineto stroke
+
+
+		0 1 0 setrgbcolor
+		lineThickness .5 mul setlinewidth
+
+		x1 y1 moveto
+		Xcentre radius add Ycentre moduleMatrix itransform  
+		lineto stroke
+
+
+		1 1 1 setrgbcolor
+		lineThickness 1.2 mul setlinewidth
+		
+	
+			
+
+render not {
+		gsave
+		lineThickness setlinewidth
+		1 255 215 div 0 setrgbcolor		
+	
+		x1 y1 radius 
+		K_ARC_DIRECTION arcrotation 1 sub get shape 1 sub get {} forall
+		arc stroke
+		grestore
+} if
+
+
+			self
+			currentdict
+			end % working temp dict
+			Board 3 1 roll put
+
+		}{
+			end
+		}ifelse
+	
+	} 
+	
+	/DP	{
+	% draw polygon
+	%DP 0 0 0 0 corners_count width layer
+		/this_poly 10 dict def
+		
+		this_poly begin
+						
+		tf token {
+			/Z1 exch def
+		}if
+		 
+		tf token {
+			/Z2 exch def
+		}if
+		 
+		tf token {
+			/Z3 exch def
+		}if
+		 
+		tf token {
+			/Z4 exch def
+		}if 
+
+		tf token {
+			/segments exch def
+		}if 
+	
+		tf token {
+			10 div /penWidth exch def
+			% may have to manage valid line widths
+		}if 
+		
+		tf token {
+			/zoneLayer exch def
+		}if 
+		
+		/polyLineCount 0 def
+
+		/keepout 1 def
+				
+		end 
+	
+	}
+	  
+	/Dl	{
+	 % draw line (polygon)
+	 %Dl corner_posx corner_posy
+	 	this_poly begin
+
+		/polyLineCount polyLineCount 1 add def
+		/segmentCount segmentCount 1 add def
+	%x y endflag
+	
+		segmentCount 
+		[
+		tf token {10 div}if
+		tf token {10 div}if
+		moduleMatrix itransform 
+	
+		] def
+		
+		% make Zone
+		
+		% special case 4 and 5 corner poly's as these
+		% can be filled rects on any layer
+		
+		% single segments are lines
+		
+		% poly's on silk layer are not allowed
+		% convert these to outlines
+		
+		% poly's on pad components are not allowed
+		segmentCount segments  ge {
+			% create a new zone for keepout (cutout) area
+		    % inherit parameters
+	zoneLayer 21 eq {
+(silk zone1: ) = 
+currentdict dfa
+(-----------------) =
+	}if
+			% close this dict
+
+
+			localModule begin
+			/linkCount linkCount 1 add def
+		
+			linkCount
+			end		
+			/linkCount exch def % use this for pin number when pin number is text
+						
+			11 NewLink
+
+			% update the local linked list
+			linkCount 1 eq {
+				localModule /firstLink self put
+				%(new root: ) print self ==
+			}{
+				% simple method without search links are added in order
+				% to the prior reference
+				self
+				Board self 1 sub get begin
+				/next exch def
+				%( n: ) print next =string cvs print
+				end
+			} ifelse
+
+			self
+			currentdict
+%(closing old zone ) =
+%currentdict dfa
+%(--------------) =
+			end % working temp dict
+			Board 3 1 roll put
+
+		}{
+			end
+		}ifelse
+	}
+
+
+	/At	{tf 72 string readline pop pop} % attributes  
+	dup /.SolderMask exch
+	dup /.SolderPaste exch
+
+	/AR {tf 72 string readline pop pop}  %not documented
+
+/$PAD {
+verbose {
+	tabs {( ) print} repeat
+	($PAD) =
+}if
+		/tabs tabs 1 add def 
+		descriptions /PAD get exec
+%		/tabs tabs 1 sub def 
+	}
+	
+/$SHAPE3D {
+		verbose {
+			tabs {( ) print} repeat
+			($SHAPE3D:) =
+		}if
+		/tabs tabs 1 add def 
+		descriptions /SHAPE3D get exec
+	}
+	
+/$EndMODULE {
+	tf 72 string readline {
+
+		verbose {
+			tabs {( ) print} repeat
+			(/$EndMODULE ref: ) print == flush
+		}{
+			pop 
+		}ifelse	
+
+
+		grestore
+
+		padCount 1 lt {
+%(group header: ) =
+%currentdict dfa
+%(----------) =
+			% this is a group rather than a footprint or module
+			
+			T0 begin 
+				7 NewLink
+				% make field text static
+				/staticText fText def
+				% always on silk layer
+				/this_layer 2 def
+				% always visible
+				/attrib_text attrib_text 16#FFF7 and def
+
+			% update the local linked list
+			linkCount 0 eq {
+(new root: ) print self ==
+				self
+				dup
+				currentdict
+				end % working temp dict
+				Board 3 1 roll put
+				/firstLink exch put
+				/linkCount linkCount 1 add def
+				
+			}{
+verbose {
+(next object: ) =
+currentdict dfa
+(++++++++++) =
+}if
+				% simple method without search links are added in order
+				% to the prior reference
+				self
+				Board self 1 sub get begin
+				/next exch def
+( n: ) print next == %=string cvs print
+				end
+				self
+				currentdict
+				end % working temp dict
+				Board 3 1 roll put
+			} ifelse
+			
+			T1 begin 
+				7 NewLink
+				% make field text static
+				/staticText fText def
+				% always on silk layer
+				/this_layer 2 def
+				% always visible
+				/attrib_text attrib_text 16#FFF7 and def
+
+			% update the local linked list
+			linkCount 0 eq {
+(new root1: ) print self ==
+				self
+				dup
+				currentdict
+				end % working temp dict
+				Board 3 1 roll put
+				/firstLink exch put
+				/linkCount linkCount 1 add def
+			}{
+verbose {
+(next object1: ) =
+currentdict dfa
+(++++++++++) =
+}if
+				% simple method without search links are added in order
+				% to the prior reference
+				self
+				Board self 1 sub get begin
+				/next exch def
+( n1: ) print next == %=string cvs print
+				end
+				self
+				currentdict
+				end % working temp dict
+				Board 3 1 roll put
+
+			} ifelse
+
+			%T2 sometimes contains comment text
+
+			1 NewLink
+			/key1_type 1 def %title block
+			/localGroup self def
+
+			
+			self
+			currentdict
+			end % working temp dict
+			Board 3 1 roll put
+		
+			localModule begin
+verbose {
+(group module: ) print localGroup == % =string cvs print
+currentdict dfa
+(----+++-----) =
+} if
+		}{
+			1 NewLink
+			/key1_type 4 def
+
+			/localGroup self def
+
+			partIDs dup begin
+			/partIDsTableLength partIDsTableLength 1 add def
+			partIDsTableLength
+			end
+			self put
+		
+		}ifelse
+		
+		
+		{firstLink}stopped {
+			(# root link not found: ) print self ==
+			%currentdict dfa flush stop
+			T0 /fText get ==
+			T1 /fText get ==
+			
+			% write the header anyway could be a null group
+			% as these seem to exist
+			/firstLink 0 def
+
+
+			self
+			currentdict
+			end % working temp dict
+			Board 3 1 roll put
+		
+		}{
+			/listLink exch def 		
+			{
+				localGroup
+				Board listLink get begin
+				/group exch def
+				%(s: ) print self =string cvs print
+				%( c: ) print Object =string cvs print
+				%( g: ) print group =string cvs print
+				%( n: ) print next ==
+				
+				next
+				end
+				/listLink exch def
+				listLink 0 eq{exit} if
+			} loop
+
+	
+			% dump the module group here. we should have all the parameters
+			
+			% silkscreen drawing commands
+			% update group links
+			
+			% pad drawing commands
+			% update group links
+			
+			% detail netlist edge connections
+			
+			self
+			currentdict
+			end % working temp dict
+			Board 3 1 roll put
+			
+		}ifelse
+
+	}{/eof true def exit }  ifelse 
+	/tabs tabs 1 sub def
+	
+	% process module
+	
+	
+	exit
+	}
+
+
+	
+>> def
+
+/commandsDraw << % >
+
+	%Po <shape> <Xstart> <Ystart> <Xend> <Yend> <width> 
+	/Po {
+
+		tf token {
+			/shape exch def 
+		}if
+
+		tf token {
+			10 div /Xstart exch def 
+		}if
+
+		tf token {
+			10 div /Ystart exch def
+		}if
+
+		% define point in board space
+		Xstart Ystart localMatrix itransform /y1 exch def /x1 exch def
+
+		tf token {
+			10 div /Xend exch def
+		}if
+		
+		tf token {
+			10 div /Yend exch def
+		}if
+
+		Xend Yend localMatrix itransform /y2 exch def /x2 exch def
+
+		tf token {
+			10 div /lineThickness exch def   % with of text drawing pen
+		}if		
+			
+	}
+
+	%De <layer> < 1 == normal | 0 == mirrored> timestamp <Normal | italic>
+	/De {
+		tf token {
+			/drawLayer exch def
+		}if
+
+		tf token {
+			/drawType exch def
+		}if
+
+		tf token {
+			10 div /drawAngle exch def
+		}if
+
+		tf token {
+			/timestamp exch def
+		}if
+
+		tf token {
+			/status exch def
+		}if
+
+	}
+
+	/$EndDRAWSEGMENT {
+
+
+		gsave
+		
+		drawLayer 28 eq {/drawLayer 21 def} if  % move edges to silk
+		
+		shape 0 eq {
+			% simple line object
+			%		-- unless it is a trace or a board edge
+		
+			drawLayer 21 eq {
+			
+				9 NewLink
+				self
+				currentdict
+				%end % working temp dict
+				Board 3 1 roll put
+				
+
+render {
+	1 1 1 setrgbcolor
+	lineThickness setlinewidth
+	x1 y1 moveto x2 y2 lineto stroke
+} if
+			
+			}{
+				drawLayer 0 eq drawLayer 15 eq or {
+					% line is a trace
+				
+				}if
+			
+			}ifelse
+		
+		
+		}if
+		
+				
+		shape 1 eq shape 3 eq or {
+			% simple circle, can be on any layer
+($EndDRAWSEGMENT: ) =
+currentdict dfa
+(----circle----) =
+		
+		}if
+		
+		shape 2 eq {
+			% complex arc can be on any layer
+($EndDRAWSEGMENT: ) =
+currentdict dfa
+(----arc----) =
+		
+		}if
+		
+
+		
+	
+		grestore
+		end
+		exit
+	}
+
+>> def
+
+/commandsText << % >
+
+	%Te "<string>" -- with quotes
+	/Te {
+	
+		quoteText /staticText exch def 
+	
+	}
+	
+	%Po <Xstart> <Ystart> <Xsize> <Ysize> <Width> <rotation>
+	/Po {
+
+		tf token {
+			10 div /Xstart exch def 
+		}if
+
+		tf token {
+			10 div /Ystart exch def
+		}if
+
+		% define point in board space
+		Xstart Ystart localMatrix itransform /yc exch def /xc exch def
+
+		tf token {
+			10 div /Xsize exch def
+		}if
+		
+		tf token {
+			10 div /Ysize exch def
+		}if
+
+		tf token {
+			10 div /penWidth exch def   % with of text drawing pen
+		}if
+
+		tf token {
+			10 div /textRotation exch def
+		}if
+		
+			
+	}
+
+	%De <layer> < 1 == normal | 0 == mirrored> timestamp <Normal | italic>
+	/De {
+		tf token {
+			/textLayer exch def
+		}if
+
+		tf token {
+			/textMirror exch def
+		}if
+
+		tf token {
+			/timestamp exch def
+		}if
+
+		tf token {
+			/textStyle exch def
+		}if
+
+		tf token {
+			/justify exch def
+		}if
+
+	}
+
+/$EndTEXTPCB {
+verbose {(preload text dump: ) =}if
+
+(raw text size: ) print Ysize =string cvs print ( ") print
+staticText print
+		
+		0 1 textSizeFilter length 2 sub {
+		/textSizeLimit exch def
+		
+		Ysize 38 lt {/textSizeLimit textSizeLimit 1 sub def exit} if
+		
+		Ysize textSizeFilter textSizeLimit get gt 
+		Ysize textSizeFilter textSizeLimit 1 add get le  
+		and {exit}if
+	
+		}for
+		/Ysize textSizeFilter textSizeLimit 1 add get def
+
+verbose  not {
+	(" filtered text size: ) print Ysize ==
+}if
+
+		
+		revRotate textRotation cvi 2 copy known {
+			get 1 add
+		}{
+			pop pop 1
+		}ifelse
+		/attrib_dir exch def
+		
+		/attrib_text 
+			attrib_dir 16#07 and
+			Ysize cvi 4 bitshift 
+			or
+		def 
+
+verbose {
+attrib_text qdbp 
+% split it out
+dup 0 12 getinterval print ( ) print
+dup 12 1 getinterval print ( ) print
+%dup 13 1 getinterval print ( ) print
+13 3 getinterval print (b TextAttributes) =
+
+(backcheck attributes: ) print		
+attrib_text -4 bitshift =string cvs print ( ) print
+attrib_text 16#07 and ==
+} if
+
+ %lineWidthMap
+	
+		
+		%Virtual space for scaling font
+		gsave
+		newpath
+		DisplayFont findfont Ysize scalefont setfont
+		0 0 moveto (M) true charpath pathbbox
+		3 -1 roll sub 
+		Ysize exch div Ysize mul /Yscale exch def 
+		exch sub Xsize exch div Xsize mul 
+		/Xscale exch def
+		%pop pop
+		
+%(Mw: ) print
+%		(M) stringwidth pop
+% ==
+%		Xsize exch div Xsize mul /Xscale exch def
+
+		% define center first this is the default
+		/textOffset 
+		%staticText true charpath pathbbox 
+		%pop exch pop sub 2 div  
+		staticText length Xsize mul 2 div neg
+		def
+		
+		
+		%/Yscale Ysize def /Xscale Xsize def
+
+		<< % >
+			/L {/textOffset 0 def} 
+			
+			/R {
+					/textOffset textOffset 2 mul def
+				}
+		>>
+		/justify load 2 copy known {
+			get exec
+		}{
+			pop pop
+		}ifelse
+
+		grestore
+
+		% end of virtual space
+
+	 	textRotation matrix rotate % file rotation
+
+		xc yc matrix translate 
+			 	
+	 	matrix concatmatrix
+	 	
+	 	textRotation cvi abs 90 eq
+	 	textRotation cvi abs 270 eq or {
+	 		Ysize 2 div neg textOffset matrix translate
+	 	}{
+			textRotation cvi abs 0 eq
+			textRotation cvi abs 180 eq or 
+			textRotation cvi abs 360 eq or {
+				textOffset Ysize 2 div neg matrix translate
+		 	}{
+		 		matrix
+	 		}ifelse
+	 	}ifelse
+	 	
+	 	matrix concatmatrix /textMatrix exch def
+
+		0 0 textMatrix transform /y1 exch def /x1 exch def
+
+verbose {
+currentdict dfa
+(---) =
+	 	
+(textMatrix: ) print  textMatrix ==
+(\n) print
+} if
+
+render {
+gsave
+	
+	DisplayFont %attrib_size 1.3 mul selectfont % rotate text context
+	findfont 
+	%[Yscale  0 0 2 index neg 0 4 index] 
+	[Xscale 0 0 Yscale neg 0 Yscale]
+	textRotation neg matrix rotate
+	matrix concatmatrix
+	%TX_DIRECTION  attrib_dir get matrix concatmatrix
+	makefont setfont
+
+verbose {currentfont /FontBBox get ==} if
+	
+			
+	0 .3 .9 setrgbcolor
+	penWidth setlinewidth
+	
+	xc 50 sub yc moveto xc 50 add yc lineto stroke
+	xc yc 50 sub moveto xc yc 50 add lineto stroke
+
+	gsave
+	%x1 y1 translate % file translation
+	0 0 textMatrix transform translate
+			
+	/Xpoint 0 def 
+	staticText {
+		Xpoint Ysize 2 div neg moveto ( ) dup 0 4 -1 roll put show
+		Xpoint 0  Xsize Ysize rectstroke
+		/Xpoint Xpoint Xsize add def
+	} forall
+	grestore	
+
+	.9 .7 0 setrgbcolor
+	penWidth setlinewidth
+	
+	
+	-25 0 textMatrix transform moveto 25 0 textMatrix transform  lineto stroke
+	0 -25 textMatrix transform moveto 0 25 textMatrix transform  lineto stroke
+	
+	1 1 1 setrgbcolor
+	
+	0 0 textMatrix transform moveto
+	%0 0 moveto 
+	staticText show
+grestore
+}if 
+
+	layerMap textLayer 2 copy known {
+		get
+		/this_layer exch def
+
+		7 NewLink	
+		self
+		currentdict
+		end % working temp dict
+		Board 3 1 roll put
+
+	}{
+		% ignore other text 
+		pop pop
+		end
+	}ifelse
+
+	
+	exit
+}	
+	
+>> def
+
+
+/AddDefaultVia {
+	% add a via to the object list
+	% this version adds the default Via
+	% this can be extended to check for negative drill size
+	% a positive drill size can be used for custom via
+	% sizes if matched to closest allowable drill
+
+
+	/padLayers 100 def	% vias are always through
+		
+	/var_2C % 6401
+	1 %attribShape 
+	0 %padAngle
+	4 bitshift or 
+	padLayers %padLayers
+	6 bitshift or def
+
+	padDrill 20 lt {
+		% use a default pad
+		%key2: padWidth
+		/padWidth parametersSetup /ViaSize get 10 div  def
+		%key2: padHeight
+		/padHeight padWidth def
+		%key2: drill index (table of 24 drill sizes)
+		/padDrill parametersSetup /ViaDrill get 10 div def
+
+	} if
+
+	0 1 drillLimit length 2 sub {
+		/padDrillIdx exch def
+		
+		padDrill 0 eq {exit} if
+		
+		padDrill drillLimit padDrillIdx get gt 
+		padDrill drillLimit padDrillIdx 1 add get le  
+		and {exit}if
+
+	}for
+	
+	% check for legal pad size adjust if necessary
+	padWidth drillLimit padDrillIdx 1 add get 17 add lt {
+			/padWidth drillLimit padDrillIdx 1 add get 17 add def
+			/padHeight padWidth def
+	}if
+
+	/interconnect 0 def
+	
+verbose {
+(adjusted via parameters: ) =
+(padWidth: ) print padWidth ==
+(padDrill: ) print drillLimit padDrillIdx 1 add get =string cvs print ( idx: ) print
+padDrillIdx ==
+} if
+	%key2: pin number
+	/padIDTxt (0) def
+	/padIDNum 0 def
+	%key1: layer interconnect attributes
+/currentrender render def
+/render false def
+render {
+		gsave
+		
+		233 255 div 150 255 div 122 255 div setrgbcolor
+		x1 y1 padWidth 2 div 0 360 arc fill
+
+		0 1 1 setrgbcolor
+		x1 y1 drillLimit padDrillIdx 1 add get 17 add
+		2 div 0 360 arc fill
+
+		
+		1 1 0 setrgbcolor
+		x1 y1 drillLimit padDrillIdx 1 add get
+		2 div 0 360 arc fill
+		
+		0 0 0 setrgbcolor
+		x1 y1 padDrill 2 div 0 360 arc fill
+	
+		
+		grestore
+
+} if
+/render currentrender def
+	
+} bind def
+
+/commandsTrack << % >
+
+	%Po <shape> <Xstart> <Ystart> <Xend> <Yend> <Width> <drill>
+	/Po {
+			/localTrack 10 dict def 
+			
+			localTrack begin  % working temp dict
+			
+			/linkCount 0 def  % modules are linked lists which are a forward reference
+			/segmentCount 0 def
+			
+			Board /drawMatrix get /localMatrix exch def
+
+
+		%Po Xpos  Ypos  Orientation(0.1deg) Layer TimeStamp         Attribut1Attribut2
+		%   41500 30855 900                 15    00000000 00000000 ~~(Po) =		
+			tf token {
+				10 div /ViaShape exch def
+			}if
+			
+			%expressPCB only supports through vias
+
+			tf token {
+				10 div /Xstart exch def 
+			}if
+
+			tf token {
+				10 div /Ystart exch def
+			}if
+
+			% define point in board space
+			Xstart Ystart localMatrix itransform /y1 exch def /x1 exch def
+
+			tf token {
+				10 div /Xend exch def
+			}if
+			
+			tf token {
+				10 div /Yend exch def
+			}if
+	
+			% define point in board space
+			Xend Yend localMatrix itransform /y2 exch def /x2 exch def
+
+
+			tf token {
+				10 div /padWidth exch def   % this is also trace with
+			}if
+
+			tf token {
+				10 div /padDrill exch def   % negative for most traces
+			}if								% can be used to set a custom drill
+	}
+
+	%De <layer> < 1 == via | 0 == track>  <netcode> <timestamp> <status>
+	% De 0 0 1 0 0
+	/De {
+%verbose {(De) =} if
+			tf token {
+				/traceLayer exch def
+			}if
+			% watch the pad layerspace
+			% especially with traces
+			/padLayers layerMap traceLayer get def
+			
+
+			tf token {
+				/via exch def
+			}if
+
+			tf token {
+				/netIdx exch def
+			}if
+
+			tf token {
+				/timestamp exch def
+			}if
+
+			tf token {
+				/status exch def
+			}if
+
+			/netTxt () def	% for completness we could look up net text from netlist
+							% only useful for reports
+
+%verbose { 
+%(process track: ) =
+%currentdict dfa
+%(---------------) =
+%}if
+			% it may be better to keep track corners in separate
+			% layer lookups Xend
+
+
+			0 1 12 { % LineWidthMap
+				/traceIdx exch def
+				
+				padWidth 6 lt {/traceIdx 1 def exit} if % default to 10 mil trace
+				
+				% special case the additions
+				padWidth 6 eq {/traceIdx 18 def exit} if
+				padWidth 7 eq {/traceIdx 15 def exit} if
+				padWidth 8 eq {/traceIdx 14 def exit} if
+				
+				padWidth 12 lt {/traceIdx 1 def exit} if
+		
+				padWidth 150 eq {/traceIdx 13 def exit} if
+				padWidth 200 eq {/traceIdx 16 def exit} if
+				padWidth 250 eq {/traceIdx 17 def exit} if
+		
+				padWidth 250 gt {/traceIdx 1 def exit} if % indicate something wrong
+				
+				padWidth LineWidthMap traceIdx get gt 
+				padWidth LineWidthMap traceIdx 1 add get le  
+				and {/traceIdx traceIdx 1 add def exit}if
+		
+			}for
+
+
+			% create a simple text hash for reverse lookup
+			/fromReverse 
+			x1 cvi 10 string cvs
+			(_) strcat 
+			y1 cvi 10 string cvs 
+			strcat cvn def
+
+			/toReverse 
+			x2 cvi 10 string cvs 
+			(_) strcat
+			y2 cvi 10 string cvs 
+			strcat cvn def
+%fromReverse ==
+%toReverse ==
+			via 1 eq {
+%verbose {(xVia: ) print via ==} if
+				% if corner exists in the edge lookup
+				% then we need to change it to
+				% a via if it is already a corner
+				CornerReverse fromReverse 2 copy known {
+%verbose {(corner exists: ) print fromReverse == } if
+					get Board exch get 
+					begin
+%verbose {
+%currentdict dfa
+%(-----p--------) =
+%}if
+					Object 4 eq {
+					
+					% change it to a via
+					/Object 3 def
+
+						AddDefaultVia
+
+					}{
+%verbose {
+%currentdict dfa				
+%(---------------) =
+%(->) print pstack (<-) =
+%}if
+						% do we need to check if there is already
+						% an object here? Most likely it will
+						% be a surface pad with a via though it
+					}ifelse
+					end
+				
+				}{
+					pop pop 
+%verbose {(new via: ) print via  =string cvs print ( ) print fromReverse == } if
+					% create a new via and store it in edge
+					10 dict begin
+					3 NewLink
+					% vias are pads
+					% key2: Attributes 100: both layers
+					% pad rotation 1
+					% pad shape via
+
+					AddDefaultVia
+
+%verbose {(via: ) print self ==} if
+					localTrack /Xstart get
+					localTrack /Ystart get 
+					localMatrix itransform /y1 exch def /x1 exch def
+	
+					self
+					currentdict
+					end
+					/via 2 index def
+					CornerReverse fromReverse via put
+					Board 3 1 roll put					
+				}ifelse
+			}{ 
+
+				CornerReverse fromReverse 2 copy known {
+					get /from exch def
+%verbose {(from found: ) print from  =string cvs print ( ) print fromReverse ==} if
+					
+					% debug draw
+					Board from get begin
+					x1 y1 moveto
+					end
+					
+				}{
+					pop pop
+					% create a new corner
+					10 dict begin
+					4 NewLink
+
+%localTrack dfa
+					localTrack /Xstart get
+					localTrack /Ystart get 
+					localMatrix itransform /y1 exch def /x1 exch def
+					
+					x1 y1  moveto
+
+					/padLayers layerMap traceLayer get def
+	
+					self
+					currentdict
+					end
+					/from 2 index def
+					CornerReverse fromReverse from put
+					Board 3 1 roll put
+					
+%verbose {(from defined: ) print from =string cvs print ( ) print fromReverse ==}if
+
+				}ifelse
+
+				CornerReverse toReverse 2 copy known {
+					get /to exch def
+%verbose {(to found: ) print to  =string cvs print ( ) print toReverse ==} if
+
+					% debug draw
+					Board to get begin
+					x1 y1 lineto
+					end
+
+
+				}{
+					pop pop
+
+					% create a new corner
+					10 dict begin
+					4 NewLink
+
+					localTrack /Xend get
+					localTrack /Yend get 
+					localMatrix itransform /y1 exch def /x1 exch def
+					
+					 x1 y1 lineto
+
+					/padLayers layerMap traceLayer get def
+	
+					self
+					currentdict
+					end
+					/to 2 index def
+					CornerReverse toReverse to put
+					Board 3 1 roll put
+%verbose {(to defined: ) print to  =string cvs print ( ) print toReverse ==}if
+
+				}ifelse
+				
+				
+				5 NewLink
+/currentrender render def
+/render false def
+render {				
+				%gsave
+parametersSetup /TrackClearence get 10 div 2 mul padWidth add setlinewidth
+padLayers 2 eq padLayers 100 eq or {
+	(# invalid layer !!!! )
+	1 0 0 setrgbcolor
+} if
+
+padLayers 20 eq {
+	0 1 0 setrgbcolor
+}if
+
+padLayers 10 eq {
+	1 1 1 setrgbcolor
+}if
+				stroke
+				%grestore
+				
+				%gsave
+				0 0 0 setrgbcolor
+					padWidth setlinewidth
+				x1 y1 moveto x2 y2 lineto stroke
+				%stroke
+				%grestore
+
+}if 
+/render currentrender def
+				
+				self
+				currentdict
+				end % working temp dict
+				Board 3 1 roll put
+
+			}ifelse
+			
+	}
+
+
+/$EndTRACK {
+
+	
+		grestore
+	exit
+}
+
+>> def
+
+/commandsZone << % >
+
+/ZInfo {tf 72 string readline pop pop}%0 23 "GND"
+
+/ZLayer {%15
+	tf token {/zoneLayer exch def} if
+}
+
+/ZAux {
+	tf token {/segments exch def} if %14 E
+	tf token {/fillHatch exch def} if 
+}
+
+/ZClearance {tf 72 string readline pop pop} %0 T
+/ZMinThickness {tf 72 string readline pop pop}%120
+/ZOptions {tf 72 string readline pop pop}%0 16 F 200 200
+/ZSmoothing {tf 72 string readline pop pop}%0 0
+
+/ZCorner {
+	/segmentCount segmentCount 1 add def
+	%x y endflag
+	
+	segmentCount 
+	[
+		tf token {10 div}if
+		tf token {10 div}if
+		localMatrix itransform 
+	
+	] def
+	tf token {/lastToken exch def }if
+
+
+
+	lastToken 1 eq {
+		segments segmentCount gt {
+			% create a new zone for keepout (cutout) area
+		    % inherit parameters
+	zoneLayer 21 eq {
+(silk zone1: ) = 
+currentdict dfa
+(-----------------) =
+	}if
+
+		    zoneLayer
+		    
+		    segments segmentCount sub
+			/segments segmentCount def
+			% close this dict
+			11 NewLink	
+			self
+			currentdict
+%(closing old zone ) =
+%currentdict dfa
+%(--------------) =
+			end % working temp dict
+			Board 3 1 roll put
+
+%(opening new zone for keepout \(cutout\)) =
+			/localZone 10 dict def 
+		
+			localZone begin  % working temp dict
+		
+			/linkCount 0 def  % modules are linked lists which are a forward reference
+			/segmentCount 0 def
+			/segments exch def
+			/zoneLayer exch def
+		
+			Board /drawMatrix get /localMatrix exch def
+		
+			/keepout 2 def
+
+		}if
+
+	} if
+
+
+}%77750 53855 0
+
+/$POLYSCORNERS
+{
+	
+	%(ZonePoly: ) =
+	{
+	tf 72 string readline {
+		($endPOLYSCORNERS) anchorsearch {
+			pop pop exit
+		}{
+			pop
+		}ifelse
+	}{/eof true def exit }  ifelse
+	} loop
+			
+}
+
+/$endCZONE_OUTLINE {
+
+	zoneLayer 21 eq {
+(silk zone: ) = 
+%currentdict dfa
+(-----------------) =
+gsave
+%localMatrix  concat
+1 1 1 setrgbcolor
+		% convert to outline
+
+		[
+		[
+		currentdict 1 get %cvx exec moveto
+		currentdict 2 get 
+		]
+		3 2 segments  { /i exch def
+		[
+			currentdict i 1 sub get %cvx exec %lineto
+			currentdict i get %cvx exec %lineto
+		]
+		[
+			currentdict i get %cvx exec %lineto		
+			currentdict i 1 add get %cvx exec %lineto
+		]
+		
+		}for
+		[
+		currentdict i 1 add get %cvx exec %lineto
+		currentdict 1 get %cvx exec moveto
+		]
+		
+		]
+		end   % this is the old zone dict, which is no longer valid
+		{
+			10 dict begin
+			% open a new segment dict
+			/lineThickness 10 def
+lineThickness setlinewidth
+			dup 0 get cvx exec /y1 exch def /x1 exch def
+			1 get cvx exec /y2 exch def /x2 exch def
+x1 y1 moveto x2 y2 lineto stroke
+			9 NewLink 
+			self
+			currentdict
+			end % working temp dict
+			Board 3 1 roll put
+
+		}forall
+		%stroke
+grestore
+	}{
+	
+		11 NewLink
+		
+		self
+		currentdict
+		end % working temp dict
+		Board 3 1 roll put
+	}ifelse
+%	(zone defined: ) print dfa
+	/tabs tabs 1 sub def
+	exit
+
+} 
+dup /$EndCZONE_OUTLINE exch
+
+
+>> def
+
+/descriptions << % >
+	/GENERAL {
+		{
+			(*) print
+			tf token {
+		
+				dup /$EndGENERAL eq {
+					pop 
+					verbose {
+						(\n$General: ) =
+						parametersGeneral dfa
+						(\n) print
+					} if
+					exit
+				} if
+		
+				dup /Di eq {
+					[
+					(Di ) print
+					4 {
+						tf token {
+						10 div
+						}if  % check for fatal error if there are not 4 bounds of the box here
+					}repeat
+					%(-> ) print pstack (<-) = flush 
+					]
+				}{
+					dup /EnabledLayers eq {
+						tf 4 string readhexstring {
+						Long$ 1 3 -1 roll putinterval 
+						%(-> ) print pstack (<-) = flush
+						Long$ cvx exec
+						}{ 0 }ifelse
+					}{
+						% parse the parameter		
+						tf token {}{/notdef} ifelse
+					}ifelse
+				}ifelse
+				
+				parametersGeneral 3 1 roll put
+				
+			}{/eof true def exit }  ifelse 
+		
+		}loop
+		(\n) print
+	}
+	
+
+	/SETUP {
+		% parse the setup section to get the default parameters for the file header
+	
+		verbose {
+			($Setup: ) =
+			parametersSetup dfa
+			(\n) print
+		}if 
+		{
+			tf token {
+		
+				dup /$EndSETUP eq {
+					pop 
+					verbose {
+						(/$Setup: ) =
+						parametersSetup dfa
+						(\n) print
+					} if
+					
+					parametersGeneral begin
+					
+
+					exit
+				} if
+				
+				dup /Layer eq {
+					(dynamic non default layer map: ) print
+					tf 72 string readline {==}if  pop
+					
+				}{
+					dup /InternalUnit eq {
+						tf 72 string readline {==}if  pop
+						% fixed at 10000
+					}{
+						dup /PcbPlotParams eq {
+							tf token {pop} if pop % ignore the big string
+						}{
+							dup /TrackWidthHistory eq {
+								tf 72 string readline readline {==}if  pop
+								% this is mostly used as a pop up menu
+								% e2k may want to save this info
+							}{
+								% these are two parameter attributes
+								dup /TextPcbSize eq
+								1 index /TextModSize eq
+								2 index /PadSize eq 
+								3 index /AuxiliaryAxisOrg eq
+								or or or {
+									[
+									2 {
+										tf token {} if
+									} repeat
+									]
+									
+									parametersSetup 3 1 roll put
+								}{
+									% the bulk of the attributes are
+									% single integer parameters
+									tf token {} if
+									parametersSetup 3 1 roll put
+								}ifelse
+							}ifelse
+						}ifelse
+					}ifelse
+				}ifelse				
+			}{/eof true def exit }  ifelse 
+		
+		}loop
+				
+	}
+	
+	/SHEETDESCR	 {						
+		{
+			tf 72 string readline {
+		 
+				($End) anchorsearch {
+					/tabs tabs 1 sub def
+					verbose {
+						tabs {( ) print} repeat
+						pop (end section: ) print == flush % section name
+					}{pop pop}ifelse	
+					exit
+				 }{
+					pop %==
+				}ifelse 
+		 
+			}{/eof true def exit }  ifelse 
+	
+		}loop
+	}
+	dup /NCLASS exch
+	dup /SHAPE3D exch
+
+	/PAD {
+(PAD link) =	
+		/linkCount linkCount 1 add def
+	
+		linkCount
+		10 dict begin
+		/linkCount exch def % use this for pin number when pin number is text
+		
+		3 NewLink
+		%(new pad: ) print self =string cvs print
+		
+		% update the local linked list
+		linkCount 1 eq {
+			localModule /firstLink self put
+			%(pad root: ) print self ==
+
+		}{
+			% simple method without search links are added in order
+			% to the prior reference
+			self
+			Board self 1 sub get begin
+			/next exch def
+		%( n: ) print next =string cvs print
+			end
+		
+		}ifelse
+		
+( lC: )print linkCount ==
+		
+		{
+			tf token {
+		 			
+					commandsPad exch 2 copy known {
+(pad command: /) print dup ==
+						get exec
+					}{
+						% catch the Text comment fields
+						
+						(bad pad token: ) print ==
+						pop 
+						
+		 			} ifelse
+		 			
+			}{/eof true def exit }  ifelse 
+	
+		}loop
+	
+	}
+		
+	/MODULE		
+	{						
+		tf 72 string readline {
+			
+verbose {
+	(module library reference: ) print == flush
+}{pop}ifelse
+			
+			/localModule 10 dict def 
+			
+			localModule begin  % working temp dict
+			
+			/linkCount 0 def  % modules are linked lists which are a forward reference
+			/segmentCount 0 def
+			/padCount 0 def
+			
+			Board /drawMatrix get /localMatrix exch def
+			
+			gsave
+			
+		}{/eof true def exit }  ifelse 
+
+		{
+			tf token {
+					/command exch def
+		 
+					commandsModule /command load 2 copy known {
+						get exec
+					}{
+						% catch the Text comment fields
+						
+						(bad module token: ) print ==
+						pop 
+		 			} ifelse
+			}{/eof true def exit }  ifelse 
+	
+		}loop
+
+	}
+
+	/DRAWSEGMENT {	
+	
+	% lines == 2 circles 1 | 3 arcs == 2
+	%$DRAWSEGMENT
+	%Po <shape> <Xstart> <Ystart> <Xend> <Yend> <width>
+	%De <layer> <type> <angle> <timestamp> <status>
+	%$EndDRAWSEGMENT
+
+						
+		/localText 10 dict def 
+		
+		localText begin  % working temp dict
+			
+		Board /drawMatrix get /localMatrix exch def
+
+
+		{
+			tf token {
+					/command exch def
+		 
+					commandsDraw /command load 2 copy known {
+						get exec
+					}{
+						% catch the Text comment fields
+						
+						(bad draw token: ) print ==
+						pop 
+		 			} ifelse
+			}{/eof true def exit }  ifelse 
+	
+		}loop
+%tfn ==
+%showpage
+%ddbugdraw
+
+	}
+
+	/TEXTPCB {	
+	
+	% static text 
+	%$TEXTPCB
+	%Te "<string>" -- with quotes
+	%Po <Xstart> <Ystart> <Xsize> <Ysize> <Width> <rotation>
+	%De <layer> < 1 == normal | 0 == mirrored> timestamp <Normal | italic>
+	%$EndTEXTPCB	
+	
+verbose {
+	(text parse: ) = %print == flush
+}{}ifelse
+		
+		/localText 10 dict def 
+		
+		localText begin  % working temp dict
+			
+		Board /drawMatrix get /localMatrix exch def
+
+
+		{
+			tf token {
+					/command exch def
+		 
+					
+					
+					 /command load 2 copy known {
+						get exec
+					}{
+						% catch the Text comment fields
+						
+						(bad text token: ) print ==
+						pop 
+		 			} ifelse
+			}{/eof true def exit }  ifelse 
+	
+		}loop
+
+	}
+	
+	% tracks and vias
+
+
+	/TRACK {	
+	
+	% static text 
+	%$TRACK
+	%Po <shape> <Xstart> <Ystart> <Xend> <Yend> <Width> <drill>
+	%De <layer> < 1 == via | 0 == track> timestamp <status>
+	%$EndTRACK	
+	
+	% shapes are 0 track, 1 burried, 2 blind, 3 through
+	% only through vias are supported
+	
+	% traces are only supported on the top and bottom layer
+			
+			verbose  {
+				(track structure: ) = %print == flush
+			}{}ifelse
+			
+			
+			gsave
+			
+
+		{
+			tf token {
+					/command exch def
+		 
+					commandsTrack /command load 2 copy known {
+						get exec
+					}{
+						% catch the Text comment fields
+						
+						(bad track token: ) print ==
+						pop 
+		 			} ifelse
+			}{/eof true def exit }  ifelse 
+	
+		}loop
+	}
+
+	/CZONE_OUTLINE
+	{						
+			
+			
+		/localZone 10 dict def 
+		
+		localZone begin  % working temp dict
+		
+		/linkCount 0 def  % modules are linked lists which are a forward reference
+		/segmentCount 0 def
+		
+		Board /drawMatrix get /localMatrix exch def
+		
+		/keepout 1 def
+			
+
+		{
+			tf token {
+					/command exch def
+		 
+		 			%(parse: ) print /command load ==
+		 
+					commandsZone /command load 2 copy known {
+						get exec
+					}{
+						% catch the Text comment fields
+						
+						(bad zone token: ) print ==
+						pop 
+		 			} ifelse
+			}{/eof true def exit }  ifelse 
+	
+		}loop
+	
+
+
+	}
+	
+	/EndBOARD { %(leak: ) print count ==	
+	exit} 
+	
+	/EQUIPOT {
+		netNames begin
+		/netTableLength netTableLength 1 add def
+		end
+		{
+			tf token {
+				/command exch def
+		 
+				%(parse: ) print /command load ==
+	 
+				<< % >
+				/Na {
+					netNames tf token {
+						quoteText put
+					}if 
+				}
+				/St {tf 72 string readline {pop}if }
+				/$EndEQUIPOT {/tabs tabs 1 sub def exit}
+				
+				>> /command load 2 copy known {
+					get exec
+				}{
+					% catch the Text comment fields
+					
+					(bad net definition \(EQUIPOT\) token: ) print ==
+					pop 
+				} ifelse
+			}{/eof true def exit }  ifelse 
+	
+		}loop
+	
+	}
+
+>> def
+
+
+/print_pcbfile {
+
+	writefiles {
+		wf exch writestring
+	}{
+		(\033[0;34m<) print $ print (\033[0m) =
+	}ifelse
+} bind def
+
+
+/writeBack << % >
+% block info
+% most blocks are components
+% groups can be titleblocks
+1 {
+(\033[1;35mmodule\033[0m) = 
+
+	% revised one pass version dict is now on stack and closed
+
+	begin
+	pop		% this is the reference index from the fist pass hash table
+
+			
+	% for compatibility with old list linker
+	/localModule currentdict def 
+			
+	%localModule begin  % working temp dict
+			
+	/linkCount 0 def  % modules are linked lists which are a forward reference
+
+	/key1_type 4 def
+
+
+	/segmentCount currentdict /fp_line known {
+		fp_line /hashes known {
+			fp_line length 1 sub 
+		}{
+			1
+		}ifelse
+	}{
+		0
+	}ifelse def
+
+	/padCount currentdict /pad known {
+		pad /hashes known {
+			pad length 1 sub 
+		}{
+			1
+		}ifelse
+	}{
+		0
+		% no pads -- module is a group
+		% this requires a forward reference
+		/key1_type 1 def
+		% convert ref and value text to
+		% static text  (add 2 items to ItemCount)
+		
+	}ifelse def
+	
+	/itemCount segmentCount padCount add def
+			
+	Board /drawMatrix get /localMatrix exch def
+							
+	% write the link header
+	false 0 1 NewLink
+
+	/localGroup self def
+	/firstLink self 1 add def
+
+(\033[1;32m% footprint: ) print key1_type ==
+(\033[0m) print
+(\033[1;32m% root link: ) print firstLink ==
+(\033[0m) print 
+
+%(ref: ) print T0 /fText get =
+
+%(value: ) print %T1 /fText get = Cd or Li
+	/attrib_text 0 def %broken
+	
+		% Orentation does not seem to exist
+	/angle 0 def
+
+
+
+
+(\033[1;32m% module_name: ) print 
+	module [ exch 
+	{invalid 1 index known {pop 95}if} forall
+	] makestring /module_name exch def
+	module_name =
+(\033[0m) print 
+
+(\033[1;32m% adding part name link) =
+	partIDs dup begin
+	/partIDsTableLength partIDsTableLength 1 add def
+	partIDsTableLength
+	end
+	self put
+
+(\033[0m) print 
+
+(Po Xpos  Ypos  Orientation\(0.1deg\) Layer TimeStamp Attribut1 Attribut2) =
+
+
+	% the at key has 3 parameters for rotated positions
+	% first two are position the third is angle
+(\033[1;32m% Po ) print
+	at 0 2 getinterval { fix_parameter } forall
+	/centerY exch def /centerX exch def
+( ) print centerX =string cvs print ( ) print centerY =string cvs print
+
+( ) print angle =string cvs print ( ) print
+( ) print layer print ( ) print tedit print
+( ?Attribut1 ?Attribut2) = 	
+	
+	centerX centerY localMatrix itransform 
+	/y1 exch def /x1 exch def
+(x1: ) print x1 =string cvs print ( y1: ) print y1 ==	
+(\033[0m) print
+		
+	% module text entities go here
+
+		
+% render			
+gsave
+
+	1 1 1 setrgbcolor
+	
+	1 setlinewidth
+	
+	x1 neg y1 neg matrix translate
+	angle matrix rotate 
+	matrix concatmatrix
+	/moduleMatrix exch def
+
+	-70 0 moduleMatrix itransform moveto 70 0 moduleMatrix itransform lineto stroke				% mark new origin
+	0 -100 moduleMatrix itransform moveto 0 100 moduleMatrix itransform lineto stroke
+
+	0 100 moduleMatrix itransform moveto
+	-30 30 moduleMatrix itransform lineto
+	30 30 moduleMatrix itransform lineto
+	0 100 moduleMatrix itransform lineto
+	stroke
+
+
+% messy messy text output for ref and value
+
+(%T<field number> <Xpos> <Ypos> <Xsize> <Ysize> <rotation> <penWidth> N <visible> <layer> "text")
+=
+
+	fp_text {
+		dup type /dicttype eq {
+		begin
+			pop
+			%fp_text 0 get print (: ) print
+			/fText fp_text 1 get def
+			%at ==
+			
+			
+(\033[1;32m% T) print fp_text 0 get print
+	at 0 2 getinterval { fix_parameter } forall
+	/Ypos exch def /Xpos exch def
+( ) print Xpos =string cvs print ( ) print Ypos =string cvs print
+
+	Xpos Ypos moduleMatrix itransform 
+	/yc exch def /xc exch def
+
+	effects /font get begin
+	thickness fix_parameter
+	size 0 2 getinterval { fix_parameter } forall
+	end
+	/Ysize exch def /Xsize exch def
+	/penWidth exch def
+( ) print Xsize =string cvs print ( ) print Ysize =string cvs print
+
+% broken
+/textRotation 0 def
+( ) print textRotation =string cvs print
+( ) print penWidth =string cvs print
+( N V ) print
+layer print
+( ") print fText print (") =
+(\033[0m) print 
+
+%fp_text 0 get print currentdict dfa
+%(effects) print effects /font get dfa
+%pstack stop
+
+	0 1 textSizeFilter length 2 sub {
+		/textSizeLimit exch def
+		
+		Ysize 38 lt {/textSizeLimit textSizeLimit 1 sub def exit} if
+		
+		Ysize textSizeFilter textSizeLimit get gt 
+		Ysize textSizeFilter textSizeLimit 1 add get le 
+		and {exit}if
+		
+	}for
+	/Ysize textSizeFilter textSizeLimit 1 add get def
+
+%verbose  {
+(filtered text size: ) print Ysize ==
+%}if
+	%Virtual space for scaling font
+	gsave
+	newpath
+	DisplayFont findfont Ysize scalefont setfont
+	0 0 moveto (M) true charpath pathbbox
+	3 -1 roll sub 
+	Ysize exch div Ysize mul /Yscale exch def 
+	exch sub Xsize exch div Xsize mul 
+	/Xscale exch def
+
+	% define center first this is the default
+	/textOffset fText length Xsize mul 2 div neg def
+
+	% for some reason rotating -90 
+	% with +- 90 rotated text mirrors 
+	% the text startpoint
+	angle cvi 270 eq 
+	textRotation cvi 270 eq  and
+	angle cvi 90 eq 
+	textRotation cvi 90 eq and
+	or  {
+		/textOffset textOffset neg def
+	}if
+
+	grestore
+	% end of virtual space
+
+
+	% text rotation is limited to horizontal or vertical
+
+	% horizontal or vertical
+	/fieldAngle textRotation  def  
+	
+	{
+		/fieldAngle fieldAngle 180 sub  def  
+		fieldAngle 0 le {exit} if
+	} loop
+	fieldAngle 0 lt {/fieldAngle fieldAngle 180 add def} if
+
+%verbose {
+%fText ==
+%(part rotation angle: ) print angle ==
+%(text rotation angle: ) print textRotation ==
+%(field angle: ) print 	fieldAngle ==
+%}if
+	revRotate fieldAngle cvi 2 copy known {
+		get 1 add
+	}{
+		pop pop 1
+	}ifelse
+	/attrib_dir exch def
+	
+	/attrib_vis 16#08 def
+%	/fVis load  /V eq textLayer 21 eq and {
+%		/attrib_vis 16#08 def 
+%	}if
+	
+	/attrib_text 
+		attrib_vis 
+		attrib_dir 16#07 and or
+		Ysize cvi 4 bitshift 
+		or
+	def 
+
+verbose {
+attrib_text qdbp 
+% split it out
+dup 0 12 getinterval print ( ) print
+dup 12 1 getinterval print ( ) print
+%dup 13 1 getinterval print ( ) print
+13 3 getinterval print (b TextAttributes) =
+
+(backcheck attributes: ) print		
+attrib_text -4 bitshift =string cvs print ( ) print
+attrib_text 16#07 and =string cvs print ( ) print 
+attrib_text 16#08 and ==
+
+} if
+
+	fieldAngle matrix rotate % file rotation
+
+	xc yc matrix translate 
+			
+	matrix concatmatrix
+	
+	fieldAngle cvi abs 90 eq
+	fieldAngle cvi abs 270 eq or {
+		Ysize 2 div neg textOffset matrix translate
+	}{
+		fieldAngle cvi abs 0 eq
+		fieldAngle cvi abs 180 eq or 
+		fieldAngle cvi abs 360 eq or {
+			textOffset Ysize 2 div neg matrix translate
+		}{
+			matrix
+		}ifelse
+	}ifelse
+	
+	matrix concatmatrix /textMatrix exch def
+
+	0 0 textMatrix transform /y1 exch def /x1 exch def
+
+			fp_text 0 get cvn 
+			currentdict 
+			end
+			def
+		}{
+			pop pop
+		}ifelse
+	}forall
+
+
+currentdict /reference 2 copy known {
+get begin
+gsave
+	
+	DisplayFont %attrib_size 1.3 mul selectfont % rotate text context
+	findfont 
+	%[Yscale  0 0 2 index neg 0 4 index] 
+	[Xscale 0 0 Yscale neg 0 Yscale]
+	fieldAngle neg matrix rotate
+	matrix concatmatrix
+	%TX_DIRECTION  attrib_dir get matrix concatmatrix
+	makefont setfont
+
+				
+	0 .3 .9 setrgbcolor
+	penWidth setlinewidth
+		
+	-25 0 textMatrix transform moveto 25 0 textMatrix transform  lineto stroke
+	0 -25 textMatrix transform moveto 0 25 textMatrix transform  lineto stroke
+	
+
+%	/fVis load  /V eq {
+	1 1 1 setrgbcolor
+	
+	0 0 textMatrix transform moveto
+	%0 0 moveto 
+	fText show
+%	}if
+grestore
+attrib_text
+end
+
+}{
+% missing text reference
+16#0289		% set it to something
+currentdict dfa
+pstack stop
+
+}ifelse
+/attrib_text exch def
+
+(all this for one number: ) print attrib_text pWord =
+
+	% should have enough info to write the link 
+
+
+%	key1: type (title block, component, symbol, footprint)
+	key1_type 1 putItem print_pcbfile
+
+%	key3: link root
+	firstLink 3 putItem print_pcbfile
+
+%	varstring key2: part name name (value)
+	module_name
+	dup length 2 putItem print_pcbfile
+	{2 putItem  print_pcbfile}forall
+
+%	varstring key2: reference
+	%T0 /fText get 
+	currentdict /reference 2 copy known {
+		get /fText get
+	}{
+		pop pop
+		(ARRGH!!!)
+	}ifelse
+	dup length 2 putItem  print_pcbfile
+	{2 putItem  print_pcbfile}forall
+
+%	key2: textAttributes
+	attrib_text 2 putItem print_pcbfile
+
+%	key3: ref positionX
+%	key3: ref positionY
+		
+	x1 3 putItem print_pcbfile
+	y1 3 putItem print_pcbfile
+		
+%	key2: value position1
+%	key2: value position2
+	0 2 putItem print_pcbfile
+	0 2 putItem print_pcbfile
+
+%currentdict dfa
+%pstack stop
+	
+	% now we can create/write out the pads
+
+	% gets messy with forward references
+	% ideally we would create the pads and draw objects
+	% then close the module.  The module needs to
+	% be written in it's entirety before the
+	% pads and draw objects are created
+	
+	% we need the module ID for the group reference
+	% so defining the module later still requires
+	% to pre-calculate the number of linked objects 
+	% that the module points to
+
+
+% dump pads
+	currentdict /pad known {
+		pad /hashes known {
+%			/itemCount pad length 1 sub def
+(pads are hashed ) print
+itemCount =string cvs print ( items.) =				
+
+			pad {
+				dup type /dicttype eq {
+					writeBack 3 get exec
+									
+				}{
+					pop pop % the hash marker
+				}ifelse
+			} forall
+		}{							
+			%only one item exists
+			%writeBack 3 get exec
+		}ifelse
+	} if
+	
+	% add in segments (fp_line) here
+	currentdict /fp_line known {
+		fp_line /hashes known {
+%			/itemCount fp_line length 1 sub def
+(fp_lines are hashed ) print
+itemCount =string cvs print ( items.) =				
+
+			fp_line {
+				dup type /dicttype eq {
+					writeBack 9 get exec
+									
+				}{
+					pop pop % the hash marker
+				}ifelse
+			} forall
+		}{							
+			%only one item exists
+			%writeBack 9 get exec
+		}ifelse
+	} if
+	
+	% arcs are separate objects (fp_arc)
+	
+	end
+
+	
+	% then end with the silk layer annotations
+	
+	% there also may be line drawn traces that
+	% are really parts of groups
+	
+		
+
+%? 
+grestore
+}
+
+% Board outline 
+% represents edges of board
+2 {				
+
+verbose {
+	 (\033[1;35mOutline\033[0m) = 
+	(P1: ) print P1 ==
+	(P2: ) print P2 ==
+	(x1: ) print x1 ==
+	(y1: ) print y1 ==
+	(attributes: ) print attributes ==
+	(from: ) print from ==
+	(to: ) print to ==
+} if
+
+	P1 1 putItem print_pcbfile
+	P2 3 putItem print_pcbfile
+	x1 3 putItem print_pcbfile
+	y1 3 putItem print_pcbfile
+	attributes 2 putItem print_pcbfile
+	from 3 putItem print_pcbfile
+	to 3 putItem print_pcbfile
+}
+
+% Pad
+%			(version 6 and above)
+%			key2: Attributes
+%				layer options 
+%					100: both layers
+%					2: silk
+%					10: component
+%					20: copper
+%				pad rotation 
+%					1:0 2:90 3:180 4:270
+%				pad shape
+%					1 via
+%					2 round
+%					3 square
+%					4 rectangle
+%					5 bga	
+3 {
+(\033[1;35mPad\033[0m) = 
+
+	/linkCount linkCount 1 add def
+
+	linkCount exch
+	begin
+	/linkCount exch def % use this for pin number when pin number is text
+	pop % the reference
+	%10 dict begin
+
+	linkCount itemCount ne localGroup 3 NewLink
+
+% $endpad
+
+
+	 % render or translate Pad dict here
+
+
+		% how to deal with pins what are not numbers		
+		% specifically A and C or K on diodes
+
+(Shape: <pad name> shape Xsize Ysize Xdelta Ydelta Orientation) =
+
+
+(\033[1;32m% Shape: ") print
+		/padIDTxt pad 0 get def
+padIDTxt print
+(" ) print
+
+%(shape: ) print 
+		/padShape pad 2 get dup print
+		cvn def
+
+%(size: ) print		
+		size 0 2 getinterval { fix_parameter } forall
+		/padHeight exch def
+		/padWidth exch def
+
+( ) print padWidth =string cvs print ( ) print 	padHeight =string cvs print	
+		
+( ?Xdelta ?Ydelta ) print
+
+		% test for angle
+
+		%padAngle length 2 gt  
+		%/padAngle at 2 get def
+		/padAngle 0 def
+		%currentdict dfa
+padAngle =string cvs =
+		
+(\033[0m) print
+
+		% convert the pad here once
+		padIDTxt length 0 gt {	
+			padIDTxt cvx {exec} stopped {
+			linkCount
+( # NAN: ") print padIDTxt print (" pad count: ) print dup ==
+			}if
+			% converted pin number is on stack
+		}{
+			linkCount
+(# empty pad name: ") print padIDTxt print (" pad count: ) print dup ==
+		}ifelse
+		/padIDNum exch def
+
+
+(\033[1;32m% Attributs: ) print %<Pad type> N <layer mask>
+		/padAttributs pad 1 get dup print
+		cvn def
+( ) print
+
+%(layer map: ) print
+ 
+		layers 0 get dup =
+		cvn layerMap2 exch 2 copy known {
+			get
+		}{
+			pop pop
+			100  % set default to both layers
+		}ifelse
+		/padLayers exch def
+		
+
+(%pad layer attributes: ) print padLayers ==
+(\033[0m)  print
+
+
+(\033[1;32m% Po ) print
+		at 0 2 getinterval { fix_parameter } forall
+		/padY exch def /padX exch def
+(padX: ) print x1 =string cvs print ( padY: ) print y1 ==	
+
+		padX padY moduleMatrix itransform 
+			/y1 exch def /x1 exch def
+
+(x1: ) print x1 =string cvs print ( y1: ) print y1 ==	
+
+(\033[0m)  print
+	
+		
+(pin number: ) print padIDNum ==
+		
+(pad shape: ) print /padShape load ==		
+		<< % >
+		/circle 2
+		/rect 4
+		
+		/O 2	% can special case these as buildups
+		/T 2	% could do this as a built up pad 
+		>> padShape 2 copy known {
+			get
+		}{
+			pop pop 2
+		}ifelse
+		/attribShape exch def		
+
+( attribute shape: ) print attribShape ==
+		
+	
+		% need to fix to add detection of square pads
+		% and round smt (bga) pads
+
+		% options pad take 2 args /std and attribShape
+		optionsPAD /padAttributs load 2 copy known {
+			get exec
+		}{
+(undefined pad) =
+			pop pop
+			/attribShape 1 def
+render {
+gsave
+-30 0 moveto 30 0 lineto stroke				% mark new origin
+0 -30 moveto 0 30 lineto stroke
+grestore
+}if
+		}ifelse
+
+/padDrill 0 def
+
+
+		% pack attributes into word
+		/var_2C attribShape revRotate padAngle get 4 bitshift or padLayers 6 bitshift or  def
+				 
+		% need to flag this pad as an edge in the corners table
+		/edgeReverse 
+		x1 cvi 10 string cvs
+		(_) strcat 
+		y1 cvi 10 string cvs 
+		strcat cvn def
+
+		CornerReverse edgeReverse 2 copy known {
+(# edge overlap: ) print get ==
+			% overlapping edges
+			% can happen when a surface pad overlaps
+			% a pad used as a via
+			
+			% currently we only track one marker per edge
+		}{
+verbose {(new edge: ) print self =string cvs print ( ) print edgeReverse ==} if
+			self put  % mark edge as busy
+					  % may have to deal with layers when SMT pads are
+					  % used
+		}ifelse
+		
+		% can add ourself to the board
+		% this is the old way of building the lists
+		self
+		currentdict
+%		end
+		Board 3 1 roll put	
+
+
+
+(Attributes: <) print var_2C 2 putItem =$
+
+/var_48 var_2C -6 bitshift def
+(var_48 -- layer options: ) print var_48 == % something to do with layers
+
+/var_34 var_2C -4 bitshift 3 and def
+(var_34 -- pad rotation: ) print var_34 ==  % pad rotation ? 
+
+/var_1C var_2C 16#0F and def				% leaves pad shape as a default
+(var_1C  -- pad shape: aperture? ) print var_1C ==
+
+(pad size: [) print 
+padWidth cvi =string cvs print
+( ) print padHeight cvi  =string cvs print (])=
+
+(drill index: ) print 
+	padDrill 0 eq {
+		0
+	}{
+		revMapdrill padDrillIdx get
+	}ifelse
+	==
+
+	(pad center: [) print 
+	x1 cvi =string cvs print
+	( ) print y1 cvi =string cvs print (])=
+
+	(pin number: ) print padIDNum ==
+
+%	(net info: ) print netTxt print ( ) print netIdx ==
+
+	(interconnect: ) print 0 ==  % interconnect requires zone netlist
+
+
+	var_2C 2 putItem print_pcbfile
+%			key2: padWidth
+	padWidth  2 putItem print_pcbfile
+%			key2: padHeight
+	padHeight 2 putItem print_pcbfile
+
+%			key2: drill index (table of 24 drill sizes)
+	padDrill 0 eq {
+		0
+	}{
+		revMapdrill padDrillIdx get
+	}ifelse
+	2 putItem print_pcbfile
+
+%			key3: X1
+%			key3: Y1
+	x1 3 putItem print_pcbfile
+	y1 3 putItem print_pcbfile
+	
+%			key2: pin number
+	padIDNum 2 putItem print_pcbfile
+
+%			key1: layer interconnect attributes
+	0 1 putItem print_pcbfile
+%				zone forward reference
+
+	
+%(new pad ) print
+%currentdict dfa
+			
+	end
+
+
+}
+
+% edge or corner
+4 {
+verbose {
+	(\033[1;35mcorner: ) print self ==
+	(\033[0m) =
+	currentdict dfa
+	 
+} if
+	% corner object point coordinates
+	% non pad or via trace connection
+	% traces in expressPCB are global and do not contain net information
+
+	%	key3: positionX
+	%	key3: positionY
+	x1 3 putItem print_pcbfile
+	y1 3 putItem print_pcbfile
+	%	key1: layer number
+	padLayers 1 putItem print_pcbfile
+	
+}
+
+% trace
+5 {		 
+verbose {			
+	(\033[1;35mtrace: ) print self ==		
+	(\033[0m) =
+	(lineWidth \(table index\): ) print traceIdx ==
+	(layer: ) print padLayers ==
+	(attributes: -1) =
+	(from:) print from ==
+	(to:) print to ==
+	(____) ==
+}if
+
+% Trace object connects to corners or edges
+% netlist can be infered from these connections
+	%	key1: lineWidth (table index)
+	traceIdx 1 putItem print_pcbfile
+
+	%	key1: layer
+	padLayers 1 putItem print_pcbfile
+
+	%	key2: attributes (version 5 and above)
+	-1 2 putItem print_pcbfile
+
+	%	key3: from
+	%	key3: to
+	from 3 putItem print_pcbfile
+	to 3 putItem print_pcbfile
+		
+
+render {
+
+		padLayers 2 eq {
+			1 .7 .2 setrgbcolor
+		}if 
+
+		gsave
+		padLayers 10 eq {
+			233 255 div 150 255 div 122 255 div setrgbcolor
+		}if
+		
+		padLayers 20 eq {
+			123 255 div 104 255 div 238 255 div setrgbcolor
+		}if 
+		
+		padLayers 100 eq {
+			1 0 0 setrgbcolor
+		 
+		} if
+		
+		LineWidthMap traceIdx get setlinewidth
+		
+		Board from get begin
+		x1 y1 moveto
+		end
+		
+		Board to get begin
+		x1 y1 lineto
+		end
+
+		stroke
+		grestore
+} if
+
+%currentdict dfa		
+
+}
+
+6 {		% unknown -- does not seem to exist
+}
+
+% pcb text
+7 {
+verbose {			
+	(\033[1;35mPCB text: \033[0m) =
+	attrib_text qdbp 
+	% split it out
+	dup 0 12 getinterval print ( ) print
+	dup 12 1 getinterval print ( ) print
+	%dup 13 1 getinterval print ( ) print
+	13 3 getinterval print (b TextAttributes) =
+
+	(backcheck attributes: font size: ) print		
+	attrib_text -4 bitshift =string cvs print ( direction index: ) print
+	attrib_text 16#07 and =string cvs print ( v: ) print
+	attrib_text 16#08 and ==
+	
+	(backcheck rotation: ) print	
+	[ 0 90 180 270 ] attrib_text 16#07 and get ==
+
+%	currentdict dfa
+%	(---) =
+}if
+% static text may be on any layer
+% text on back/copper layer is mirrored
+	%	key1: lineWidth (table index)
+%	varstring key2: text
+	staticText length 2 putItem print_pcbfile
+	staticText {
+		2 putItem print_pcbfile
+	}forall
+	
+%	key1: layer
+	this_layer 1 putItem print_pcbfile
+%	key2: attribute direction
+	attrib_text 2 putItem print_pcbfile
+%	key1: attributes style
+	1 1 putItem print_pcbfile
+%	key3: positionX
+%	key3: positionY
+	x1 3 putItem print_pcbfile
+	y1 3 putItem print_pcbfile
+
+render {
+	gsave
+	newpath
+	.9 .7 0 setrgbcolor
+	penWidth setlinewidth
+	
+	
+	x1 25 sub y1 moveto x1 25 add y1 lineto stroke
+	x1 y1 25 sub moveto x1 y1 25 add lineto stroke
+
+
+	DisplayFont %attrib_size 1.3 mul selectfont % rotate text context
+	findfont 
+	%[Yscale  0 0 2 index neg 0 4 index] 
+	[Xscale 0 0 Yscale neg 0 Yscale]
+	textRotation neg matrix rotate
+	matrix concatmatrix
+	%TX_DIRECTION  attrib_dir get matrix concatmatrix
+	makefont setfont
+
+
+
+	this_layer 2 eq {
+		1 .7 .2 setrgbcolor
+	}if 
+
+	gsave
+	this_layer 10 eq {
+		233 255 div 150 255 div 122 255 div setrgbcolor
+	}if
+	
+	this_layer 20 eq {
+		123 255 div 104 255 div 238 255 div setrgbcolor
+	}if 
+	
+	this_layer 100 eq {
+		1 0 0 setrgbcolor
+	 
+	} if
+
+	x1 y1 moveto staticText show
+	grestore
+}if
+
+}
+
+% filled rectangle
+8 {
+		% filled rectangle - not pads
+		% may not be a kiCad equivelent
+}
+
+% line drawing
+9 {		
+	% non trace line. This is used for silk screen drawings
+verbose {			
+	(\033[1;35mline draw: \033[0m) =
+}if
+
+	/linkCount linkCount 1 add def
+
+	linkCount exch
+	begin
+	/linkCount exch def % use this for pin number when pin number is text
+	pop % the reference
+	%10 dict begin
+
+	% autoparsing overwrites postscript name
+	% quick fix
+	/lineEnd end def
+	currentdict /end undef
+%fp_line
+% draw segment
+
+(DS Xstart Ystart Xend Yend Width Layer) =
+
+	start 0 2 getinterval { fix_parameter } forall
+(\033[0;32m% DS ) print
+	/yStart exch def /xStart exch def
+( ) print xStart =string cvs print ( ) print yStart =string cvs print
+
+	lineEnd 0 2 getinterval { fix_parameter } forall
+	/yEnd exch def /xEnd exch def
+( ) print xEnd =string cvs print ( ) print yEnd =string cvs print
+
+	/lineThickness width fix_parameter def
+( ) print lineThickness =string cvs print 
+
+( ) print layer dup =
+	cvn /lineLayer exch def
+(\033[0m)  print
+
+%(segment dict:) print currentdict dfa
+
+	lineLayer /F.SilkS eq {
+%(silk module) =	
+						
+		linkCount itemCount ne localGroup 9 pstack NewLink
+
+		xStart yStart moduleMatrix itransform 
+		/y1 exch def /x1 exch def
+		xEnd yEnd moduleMatrix itransform 
+		/y2 exch def /x2 exch def
+		self
+		currentdict
+%		end % working temp dict
+		Board 3 1 roll put
+	}{
+		(\033[0;35m% modules can not contain copper traces.\033[0m) =
+		pstack stop
+	}ifelse
+render {
+	gsave
+
+	1 255 215 div 0 setrgbcolor		
+
+	lineThickness setlinewidth
+	x1 y1 moveto
+
+	x2 y2 lineto stroke
+
+	grestore
+}if
+
+	% always layer 2 
+	2 1 putItem print_pcbfile			
+
+	% start and end points
+	%read3 (x1: )
+	%read3 (y1: )
+	x1 3 putItem print_pcbfile			
+	y1 3 putItem print_pcbfile			
+
+	%read3 (x2: )
+	%read3 (y2: )
+
+	x2 3 putItem print_pcbfile			
+	y2 3 putItem print_pcbfile			
+
+	% thickness
+	%read3 (t: )
+	lineThickness 3 putItem print_pcbfile
+	end
+}
+
+% circle
+10 {
+	% circle arc object
+	% express can only draw a small group of arcs that are rotated
+	%	10: arc
+%shape ==
+%arcrotation ==
+	/arcattrib shape 16#07 and arcrotation  5 bitshift 16#E0 and or def
+
+verbose {			
+	(\033[1;35mcircle or arc draw: \033[0m) =
+	(key1: attributes: ) print arcattrib dup =string cvs print ( ) print qdbp ==
+	(key3: positionX: ) print x1 ==
+	(key3: positionY: ) print y1 == 
+	(key3: radius: ) print radius ==
+	(key3: linewith: ) print lineThickness ==
+	(key1: layer: ) print layerMap lineLayer get ==
+} if
+		
+	
+
+	%key1: attributes: 
+	arcattrib 1 putItem print_pcbfile			
+
+	%key3: positionX:
+	%key3: positionY: 
+	x1 3 putItem print_pcbfile			
+	y1 3 putItem print_pcbfile			
+
+	%key3: radius: 
+	radius 3 putItem print_pcbfile			
+
+	%key3: linewith: 
+	lineThickness 3 putItem print_pcbfile			
+	
+	%key1: layer: 
+	layerMap lineLayer get  1 putItem print_pcbfile			
+	
+render {
+	gsave
+	lineThickness setlinewidth
+
+	x1 y1 radius 
+	K_ARC_DIRECTION arcrotation 1 sub get shape 1 sub get {} forall
+	arc stroke
+	grestore
+}if
+%verbose { (-----------) = } if 
+%	currentdict dfa
+
+}
+
+% Zone
+11 {	%(zone defined: ) print currentdict dfa
+verbose {			
+	(\033[1;35mzone defined: \033[0m) =
+} if
+	%read1 (zone attributes: )
+	keepout  1 putItem print_pcbfile	
+	
+	%read1 layer
+	layerMap zoneLayer get 1 putItem print_pcbfile	
+	
+	%read2 segment count
+	segments 2 putItem print_pcbfile	
+
+	1 1 segments {
+		currentdict exch get cvx exec exch
+	%read3 xp 
+	%read3 yp
+		3 putItem print_pcbfile
+		3 putItem print_pcbfile
+	}for
+		
+%currentdict dfa
+%(+++-----+++) =	
+		
+	render {
+		%(zone layer: ) print layerMap zoneLayer get ==
+		
+		/lz layerMap zoneLayer get def
+
+		% zone layer 2 is not supported (does not seem to cause an error though)
+		lz 2 eq {
+			1 .7 .2 setrgbcolor
+		}if 
+		
+		lz 15 eq {
+			233 255 div 150 255 div 122 255 div setrgbcolor
+		}if
+		
+		lz 20 eq {
+			123 255 div 104 255 div 238 255 div setrgbcolor
+		}if 
+		
+		keepout 2 eq {
+			1 0 0 setrgbcolor
+		 
+		} if
+		
+		%(points in plane: ) print segments == 
+
+		gsave
+		[65] 0 setdash
+	 
+		newpath
+		
+		currentdict 1 get cvx exec moveto
+
+		2 1 segments {
+			currentdict exch get cvx exec lineto
+		
+		}for
+		
+		closepath
+		stroke
+		grestore
+	} if
+		
+		% end
+
+
+}
+
+
+
+>> def
+
+/fieldParameters { 
+%T<field number> <Xpos> <Ypos> <Xsize> <Ysize> <rotation> <penWidth> N <visible> <layer> "text"
+	%/command load 24 string cvs ==
+	
+	10 dict begin
+	tf token { 10 div /Xstart exch def} if
+	tf token { 10 div /Ystart exch def} if
+	
+	Xstart Ystart moduleMatrix itransform 
+	/yc exch def /xc exch def
+
+	tf token { 10 div /Xsize exch def} if
+	tf token { 10 div /Ysize exch def} if
+
+	tf token { 10 div /textRotation exch def} if
+	tf token { 10 div /penWidth exch def} if
+
+	tf token { pop} if
+
+	tf token { /fVis exch def} if
+
+	tf token { /textLayer exch def} if
+
+	tf token { pop} if
+
+	quoteText /fText exch def
+	
+	
+	0 1 textSizeFilter length 2 sub {
+		/textSizeLimit exch def
+		
+		Ysize 38 lt {/textSizeLimit textSizeLimit 1 sub def exit} if
+		
+		Ysize textSizeFilter textSizeLimit get gt 
+		Ysize textSizeFilter textSizeLimit 1 add get le 
+		and {exit}if
+		
+	}for
+	/Ysize textSizeFilter textSizeLimit 1 add get def
+
+%verbose  {
+%	(filtered text size: ) print Ysize ==
+%}if
+	%Virtual space for scaling font
+	gsave
+	newpath
+	DisplayFont findfont Ysize scalefont setfont
+	0 0 moveto (M) true charpath pathbbox
+	3 -1 roll sub 
+	Ysize exch div Ysize mul /Yscale exch def 
+	exch sub Xsize exch div Xsize mul 
+	/Xscale exch def
+
+	% define center first this is the default
+	/textOffset 
+	%staticText true charpath pathbbox 
+	%pop exch pop sub 2 div 
+	textLayer 20 eq { 
+		%mirror text on back layer
+		% we do not have a back silk layer
+		% so this is informational 
+		fText length Xsize mul 2 div
+	}{
+		fText length Xsize mul 2 div neg
+	}ifelse
+	def
+
+	% for some reason rotating -90 
+	% with +- 90 rotated text mirrors 
+	% the text startpoint
+	angle cvi 270 eq 
+	textRotation cvi 270 eq  and
+	angle cvi 90 eq 
+	textRotation cvi 90 eq and
+	or  {
+		/textOffset textOffset neg def
+	}if
+
+	grestore
+	% end of virtual space
+
+
+	% text rotation is limited to horizontal or vertical
+
+	% horizontal or vertical
+	/fieldAngle textRotation  def  
+	
+	{
+		/fieldAngle fieldAngle 180 sub  def  
+		fieldAngle 0 le {exit} if
+	} loop
+	fieldAngle 0 lt {/fieldAngle fieldAngle 180 add def} if
+
+%verbose {
+%fText ==
+%(part rotation angle: ) print angle ==
+%(text rotation angle: ) print textRotation ==
+%(field angle: ) print 	fieldAngle ==
+%}if
+	revRotate fieldAngle cvi 2 copy known {
+		get 1 add
+	}{
+		pop pop 1
+	}ifelse
+	/attrib_dir exch def
+	
+	/attrib_vis 0 def
+	/fVis load  /V eq textLayer 21 eq and {
+		/attrib_vis 16#08 def 
+	}if
+	
+	/attrib_text 
+		attrib_vis 
+		attrib_dir 16#07 and or
+		Ysize cvi 4 bitshift 
+		or
+	def 
+
+%verbose 
+false {
+attrib_text qdbp 
+% split it out
+dup 0 12 getinterval print ( ) print
+dup 12 1 getinterval print ( ) print
+%dup 13 1 getinterval print ( ) print
+13 3 getinterval print (b TextAttributes) =
+
+(backcheck attributes: ) print		
+attrib_text -4 bitshift =string cvs print ( ) print
+attrib_text 16#07 and =string cvs print ( ) print 
+attrib_text 16#08 and ==
+
+} if
+
+
+	fieldAngle matrix rotate % file rotation
+
+	xc yc matrix translate 
+			
+	matrix concatmatrix
+	
+	fieldAngle cvi abs 90 eq
+	fieldAngle cvi abs 270 eq or {
+		Ysize 2 div neg textOffset matrix translate
+	}{
+		fieldAngle cvi abs 0 eq
+		fieldAngle cvi abs 180 eq or 
+		fieldAngle cvi abs 360 eq or {
+			textOffset Ysize 2 div neg matrix translate
+		}{
+			matrix
+		}ifelse
+	}ifelse
+	
+	matrix concatmatrix /textMatrix exch def
+
+	0 0 textMatrix transform /y1 exch def /x1 exch def
+
+%verbose {
+%currentdict dfa
+%(---) =
+	 	
+%(textMatrix: ) print  textMatrix ==
+%(\n) print
+%} if
+
+render {
+gsave
+	
+	DisplayFont %attrib_size 1.3 mul selectfont % rotate text context
+	findfont 
+	%[Yscale  0 0 2 index neg 0 4 index] 
+	[Xscale 0 0 Yscale neg 0 Yscale]
+	fieldAngle neg matrix rotate
+	matrix concatmatrix
+	%TX_DIRECTION  attrib_dir get matrix concatmatrix
+	makefont setfont
+
+%verbose  {currentfont /FontBBox get ==} if
+				
+	0 .3 .9 setrgbcolor
+	penWidth setlinewidth
+	
+	xc 50 sub yc moveto xc 50 add yc lineto stroke
+	xc yc 50 sub moveto xc yc 50 add lineto stroke
+
+{
+	gsave
+	%x1 y1 translate % file translation
+	0 0 textMatrix transform translate
+
+	fText =$
+			
+	/Xpoint 0 def 
+	fText {
+	(!) print
+		Xpoint Ysize 2 div neg moveto ( ) dup 0 4 -1 roll put show
+		Xpoint 0  Xsize Ysize rectstroke
+		/Xpoint Xpoint Xsize add def
+	} forall
+	grestore	
+} pop
+	.9 .7 0 setrgbcolor
+	penWidth setlinewidth
+	
+	
+	-25 0 textMatrix transform moveto 25 0 textMatrix transform  lineto stroke
+	0 -25 textMatrix transform moveto 0 25 textMatrix transform  lineto stroke
+	
+	/fVis load  /V eq {
+	1 1 1 setrgbcolor
+	
+	0 0 textMatrix transform moveto
+	%0 0 moveto 
+	fText show
+	}if
+
+grestore
+}if 
+	
+	currentdict end
+%tfn ==
+%showpage
+%ddbugdraw
+
+	
+	/command load exch def
+
+} bind def
+
+/parseString {
+	/iterator exch def
+		iterator newLineMrk eq {
+		
+			/m_lineNumber m_lineNumber 1 add def
+			/m_lineOffset  0 def
+			
+		} if
+
+		/m_lineOffset m_lineOffset 1 add def
+
+		whiteSpSkip iterator known not {
+		
+		
+			iterator openBlock eq {
+				counttomark 0 gt {
+					new_key {
+						counttomark array astore exch pop makestring
+
+						10 dict begin	% this will become the section dict
+						cvn /thisKey exch def
+						/refName thisKey def
+						thisKey mark mark
+					}{
+						counttomark array astore exch pop makestring
+						mark
+					}ifelse
+				}if
+
+				/new_key true def
+			
+				/is_white false def
+				% recursively parse the input by falling through to loop
+				
+			}{
+				iterator closeBlock eq is_white or {
+					counttomark 0 gt {
+						counttomark array astore exch pop makestring
+					}{
+						pop
+					}ifelse
+					iterator closeBlock eq {
+						counttomark 1 gt {
+							counttomark array astore exch pop
+							1 index /thisKey exch def
+							def
+							mark
+						}{
+							counttomark 0 eq {
+								pop 
+								currentdict exch
+								end	% close the section dictionary
+								/thisKey exch def
+
+(\033[1;33m) print
+thisKey =string cvs print
+dup dfa
+(\033[0m) print
+
+								% could check for duplicate sections
+								% lines pads etc
+								currentdict thisKey known {
+(\033[0;31m) print
+(% duplicate entry ) print thisKey ==
+refName =string cvs print
+(\033[0m) =
+									thisKey load /hashes known {
+										% parent directory is hash table
+										
+(has hash) = 	
+										% open the hash dict
+										thisKey load begin
+										% create a new hash instance
+										key_hashes begin
+										next_hash
+										/next_hash next_hash 1 add def
+										end
+										% new dict is still on stack
+										exch def
+										end % and close it
+																	
+thisKey load dfa	
+(----) = 								
+%pstack stop									
+
+									}{
+										% parent directory is an object
+(not hashed) = 			
+										% create new hash table
+										10 dict begin
+										key_hashes begin
+										next_hash
+										/next_hash next_hash 1 add def
+										end
+										/hashes true def
+										% move object into hash table
+										thisKey load def
+										thisKey currentdict
+										end
+										def % replace it
+									
+										% now add the duplicate
+										thisKey load begin
+										key_hashes begin
+										next_hash
+										/next_hash next_hash 1 add def
+										end
+										% new dict is still on stack
+										exch def
+										end % and close it
+																							
+									}ifelse
+
+								}{
+									thisKey exch def
+									%thisKey (end dict) def
+								}ifelse
+								mark
+							}{
+									3 -1 roll /thisKey exch def
+									thisKey exch def
+							} ifelse
+						}ifelse
+						sections thisKey known {
+
+(\033[1;34m) print
+thisKey =string cvs print
+currentdict dfa
+(\033[0m) =
+
+%currentdict 
+thisKey 
+end
+/thisKey exch def
+thisKey ==
+
+%							currentdict thisKey known {
+%(isknown) =
+%thisKey load dfa
+%							}if 
+%pstack stop
+%								currentdict
+%								thisKey 
+%								end	% close the section dictionary
+%								/thisKey exch def
+%								% could check for duplicate sections
+%								% lines pads etc
+%								currentdict thisKey known {
+%(\033[1;31m) print
+%(% duplicate entry ) print thisKey ==
+%refName =string cvs print
+%(\033[0m) =
+%currentdict dfa
+%(->) =
+%pstack stop
+%								}if
+%								thisKey exch def
+
+						}if
+					}{
+						new_key {
+							cvn
+
+							sections 1 index known {
+currentdict 1 index known {
+(found key ) print
+dup ==
+								dup load begin
+								key_hashes begin
+								next_hash
+								/next_hash next_hash 1 add def
+								end
+
+								10 dict 2 copy def end begin
+								/thisHash exch def
+								/refName exch def
+								refName								
+%pstack stop
+}{
+(new hash dict) =
+								10 dict 2 copy def begin
+								/hashes true def
+								key_hashes begin
+								next_hash
+								/next_hash next_hash 1 add def
+								end
+
+								10 dict 2 copy def end begin
+								/thisHash exch def
+								/refName exch def
+								refName
+currentdict dfa
+
+}ifelse
+								% this will become the section dict
+							}if
+							mark
+							/new_key false def
+						}if
+
+						% recursively parse the remaining char
+						/is_white false def
+						mark iterator parseString
+					}ifelse
+						
+					% process key here
+					
+				}{
+					iterator quoteText eq {
+						{
+							tf read{}{quoteText}ifelse
+							dup quoteText eq {
+								pop exit 
+							}if
+						} loop
+						counttomark array astore exch pop makestring 
+						mark
+						/is_white false def
+					}{
+						% leave the iterator on the stack for 
+						% collection into a string
+						iterator						
+					}ifelse
+				}ifelse
+			}ifelse
+			/is_white false def
+		}{
+			/is_white true def	
+		}ifelse
+} bind def
+
+tfd 
+{
+
+	cleardictstack % prevent leaky dicts
+%	(leakydicts: ) print countdictstack ==
+
+	/tfn exch def
+	verbose {(processing: ) print tfn ==}if
+	/tf tfn (r) file def 
+
+	/fatalError false def
+
+	/suffix tfn length def
+	[ 47 46 tfn {}forall 
+	{46 eq {exit}{/suffix suffix 1 sub def }ifelse} loop 
+	/filenamepos suffix 1 sub def
+	{47 eq {exit}{/filenamepos filenamepos 1 sub def }ifelse} loop 
+	] makestring (/.) anchorsearch {pop} if
+
+	/PathPrefix exch def
+
+	tfn filenamepos suffix filenamepos sub 1 sub getinterval /SubFilename exch def
+
+	(infile path prefix: ) print PathPrefix ==
+	(infile: ) print SubFilename ==
+	
+	
+	KiCadDataFolderPfx  SubFilename strcat /NewProjectPfx exch def 
+
+	NewProjectPfx (_e.pcb) strcat
+	/NewBoardName exch def
+	
+	/Board 10 dict def
+	
+	/netNames 10 dict def  % from EQUIPOT
+	
+	netNames begin
+	/netTableLength 0 def 
+	end 
+
+	/partIDs 10 dict def  % from EQUIPOT
+	
+	partIDs begin
+	/partIDsTableLength 0 def 
+	end 
+
+	/EdgeReverse 10 dict def % pads and via lookups
+	
+	/CornerReverse 10 dict def % corner lookups
+
+	NewProjectPfx (_e.net) strcat
+	/NewNetlistName exch def
+
+NewBoardName ==
+
+	writefiles { /wf NewBoardName (w) file def} if
+
+
+/ddbugdraw {
+	% fill background with black -- traditional for board editing 
+	render {
+	
+		0 0 0 setrgbcolor
+		
+		0 0 612 792 rectfill
+
+
+		%306 384 translate % 180 rotate
+		%36 700 translate 180 rotate
+		270 rotate
+%		72 300 div dup scale
+%		72 500 div dup scale 			% view with 150% enlargement 
+		%72 1000 div dup scale 			% normal scale
+		-1 1 scale
+		
+			
+		0 1 1 setrgbcolor
+	
+		12 setlinewidth
+		
+		1 setlinecap
+		
+		1 setlinejoin
+	
+			
+	} if
+} bind def
+
+
+	/eof false def
+% parse the file
+
+	/tabs 0 def
+
+showpage
+ddbugdraw	
+
+(parsing: ) =	
+% this version uses the "New" lisp like parenthesis syntax  this
+% is slightly more human readable apart from the weird way
+% it uses parenthesis () whic postscript has trouble balancing
+% in the syntax editor
+
+10 dict begin % local parsing dict	
+/local currentdict def
+/refName /local def
+/openBlock$ <28> def
+/closeBlock$ <29> def
+
+/openBlock 16#28 def
+/closeBlock 16#29 def
+
+/newLineMrk 16#0A def
+/whiteSpMrk 16#20 def
+/whiteTabMrk 16#09 def	% like python tabs may be verbotten
+
+/quoteText 16#22 def
+
+/m_lineNumber 1 def
+/m_lineOffset 0 def
+/new_key false def
+/inQuote false def
+/is_white false def
+
+/nest 0 def
+
+/whiteSpSkip << % >
+	
+	16#08 <08>
+	16#09 <09>
+	16#0A <0A>
+	16#0B <0B>
+	16#0C <0C>
+	16#0D <0D>
+	16#20 <20>
+
+>> def 
+
+% problems parsing some sections
+/sections << % >
+% sections 
+	/net_class {}
+	/module {}
+	/pad {}
+	/fp_text {}
+>> def
+
+
+
+
+% for use inside a sting the octal equivalents of the block mark are \050 and \051
+
+	% place a mark to close the string against
+	mark
+	% recursively parse the whole system
+	{
+		tf read{ 
+			parseString
+		}{
+			% end of file
+			% clean up any remaining fragments
+			exit
+		}ifelse
+	} loop
+
+	pop % the remaining mark
+
+
+	tf closefile
+(file parsed: ) =
+
+(detailing board) =
+
+	kicad_pcb
+	end % local parsing dict
+	% open the root dict
+	begin
+
+
+%now we can process and render the board
+% this will use specific tokens
+
+	(\033[0;34m) print
+	% this point has most of the header information
+	(Boaard filename: ) print NewBoardName print
+
+	(\nheader ) print
+	<C7B930010700000002000E00> print_pcbfile
+	
+	(key ) print  % key goes here
+	 <0000> print_pcbfile
+	
+	(undefined ) print 
+	 <000000 000000> print_pcbfile
+
+	(layers: ) print 
+	LayerCount 2 putItem  print_pcbfile
+
+	setup begin
+	(TrackClearence: ) print 
+	trace_clearance fix_parameter
+	2 putItem  print_pcbfile
+	
+	(ZoneClearence: ) print 
+	zone_clearance fix_parameter
+	2 putItem  print_pcbfile
+	
+	(default via: ) print 
+	via_size fix_parameter
+	2 putItem print_pcbfile
+	
+	% this need to be fixed to
+	% reverse lookup the drill from the
+	% file header 
+	(default via drill #index: ) print	
+	%via_drill find_drill_index 
+	350 2 putItem print_pcbfile
+	
+	end
+	
+	(undefined: ) print 
+	 <0000> print_pcbfile
+	
+	(schematic link name: ) print 
+	0 2 putItem print_pcbfile
+
+	(22 key2: undefined bytes: ) print
+	
+	3 2 putItem print_pcbfile
+	
+	7{0 2 putItem print_pcbfile}repeat
+	8{-1 2 putItem print_pcbfile}repeat
+	6{0 2 putItem print_pcbfile}repeat
+
+
+	general begin
+	
+	% convert the outline area to the old name syntax
+	[ area {fix_parameter} forall ]
+
+	end
+	/Di exch def
+	
+	
+	% create the board outline
+	%
+	% this is a static constructor with
+	% fixed locations for the object
+	
+	
+	% setup a translation matrix for digagnostic render
+	Di 0 2 getinterval cvx exec
+	matrix translate /drawMatrix exch def
+	Board /drawMatrix drawMatrix put
+	
+	% create and write object number 1
+	10 dict begin
+	%code: 2 id: 1 group: 0 link: 0
+	
+	false 0 2 NewLink
+													
+	/P1 1 def % undefined parameter
+	/P2 0 def
+	
+	Di 0 2 getinterval cvx exec drawMatrix itransform 
+	cvi /y1 exch def
+	cvi /x1 exch def
+
+	/attributes -1 def
+	/from 4 def
+	/to 2 def
+
+	writeBack 2 get exec
+
+	self
+	currentdict 
+	end
+	
+	Board 3 1 roll put	% board linked list reference
+
+
+	% create and write object number 2
+	10 dict begin
+	
+	false 0 2 NewLink
+							 
+	/P1 1 def % undefined parameter
+	/P2 0 def
+	
+	Di 2 get Di 1 get  drawMatrix itransform 
+	cvi /y1 exch def
+	cvi /x1 exch def
+
+	/attributes 0 def
+	/from 1 def
+	/to 3 def
+
+	writeBack 2 get exec
+
+	self
+	currentdict 
+	end
+	
+	Board 3 1 roll put	% board linked list reference
+
+	% create and write object number 3
+	10 dict begin
+	
+	false 0 2 NewLink
+							 
+	/P1 1 def % undefined parameter
+	/P2 0 def
+	
+	Di 2 2 getinterval cvx exec drawMatrix itransform 
+	cvi /y1 exch def
+	cvi /x1 exch def
+
+	/attributes 0 def
+	/from 2 def
+	/to 4 def
+
+	% create and write object number 4
+	writeBack 2 get exec
+
+	self
+	currentdict 
+	end
+	
+	Board 3 1 roll put	% board linked list reference
+
+	10 dict begin
+	
+	false 0 2 NewLink
+							 
+	/P1 1 def % undefined parameter
+	/P2 0 def
+	
+	Di 0 get Di 3 get drawMatrix itransform 
+	cvi /y1 exch def
+	cvi /x1 exch def
+
+	/attributes 0 def
+	/from 3 def
+	/to 1 def
+
+	writeBack 2 get exec
+
+	self
+	currentdict 
+	end
+	
+	Board 3 1 roll put	% board linked list reference
+
+	% since the objets are defined statically we
+	% can not render them in place
+
+
+	render {
+
+		-3000 0 moveto 3000 0 lineto stroke				% mark new origin
+		0 -3000 moveto 0 3000 lineto stroke
+
+		gsave
+		Di 0 2 getinterval {neg} forall translate			% set upper left to the new origin
+				
+		1 255 215 div 0 setrgbcolor		
+		
+		Di 0 2 getinterval cvx exec moveto
+		Di 2 get Di 1 get lineto
+		Di 2 2 getinterval cvx exec lineto 
+		Di 0 get Di 3 get lineto
+		Di 0 2 getinterval cvx exec lineto
+		stroke
+		grestore
+		
+		
+	} if
+
+	% next we can render the zones
+	% ideally the zones should be rendered back to front
+	% so that the diagnostic plot is correct 
+	% in practice it is easier just to throw the data as is
+	% the display is more for sanity checking that the conversion is
+	% correct
+	
+	% traces now called segments and vias are rendered here
+	% these separate now into two subtypes
+	
+	currentdict /segment known {
+		segment /hashes known {
+(segments are hashed) =	
+		}{
+			% only a single segment exists
+(segment is solo) =	
+		}ifelse 
+	}if
+	
+	% vias can be processed next
+	
+	% most of the work is done in the modules (footprints)
+	currentdict /module known {
+(new module ) print
+currentdict dfa 
+		module /hashes known {
+			/itemCount module length 1 sub def
+(modules are hashed ) print
+itemCount =string cvs print ( items.) =				
+			module {
+				dup type /dicttype eq {
+					writeBack 1 get exec					
+				}{
+					pop pop % the hash marker
+				}ifelse
+			} forall
+		}{
+			% only a single module exists
+(module is solo) =	
+			%writeBack 1 get exec
+			module begin
+currentdict dfa
+			end
+		}ifelse 
+	}if
+
+	% the last section to convert is the silk lines and drawings
+	% expressPCB only allows drawing on the top silk layer
+	% this means a lot of information gets lost
+
+	
+	writefiles {
+		wf closefile
+	}if
+
+	NewBoardName ==
+%	showpage
+	
+
+(process complete: ) =
+(-------) print  pstack 
+currentdict dfa
+(\033[0m) =
+tfn ==
+showpage 
+stop
+
+
+}loop
+%(leak4: ) print count ==	
+	
+		
+
+
+	
+	
+
+} 256 string filenameforall % for batch processing files
+

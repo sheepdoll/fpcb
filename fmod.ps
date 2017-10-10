@@ -1,0 +1,3371 @@
+%!PS
+
+% deconstructed reader for express schematic files
+
+% converts expressPCB components to KiCad
+
+% requires ghostscript min and max functions
+
+% <yourpath> must be changed for thit to run
+%/tfd (<yourpath>/PCBComponents_Library/*.p) def
+/tfd (<yourpath>/PCBComponents_Custom/*.p) def
+
+
+
+%-------------------------------------------------------------------------
+
+/KiCadDataFolderPfx (KiCad/myFiles/) def % change this to the full path where the 
+						% converted files will be stored.  Must be full path from
+						% top file directory, or files will be stored
+						% in the conversion source directory. Directory must exist.
+
+
+/verbose false def
+
+/render true def
+
+/writefiles false def
+
+/DisplayFont /URWGothicL-Book def
+%/DisplayFont /AvanteGarde-Book def
+
+
+% no user settings past this point
+
+%######################################################################
+
+
+/=$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile =} bind def
+
+/$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile } bind def
+
+%/dfa {pop} bind def  %
+/dfa {{ exch =string cvs print (: ) print ==} forall} bind def
+
+/makestring { 
+	%verbose 2 gt {(<) print =$} if
+	dup length string       % new string of right size
+	dup /NullEncode filter      % make a file out of string
+	2 index                 % array to stack top
+    { 2 copy write pop }         % integers to string
+	forall
+    flushfile exch pop                   % clean up
+} bind def
+
+/strcat {
+	dup length 2 index length add string
+	2 index length 3 -1 roll 3 copy putinterval pop pop 
+	0 3 -1 roll 3 copy putinterval pop pop 
+
+} bind def
+
+
+/Word_l$ <870000> def			% low first
+/Long_l$ <8500000000> def		% low first
+
+/Word$ <860000> def			% high first
+/Long$ <8400000000> def		% high first
+
+
+/flushFlag false def  % only render on exit
+
+/sheetCount 1 def 
+
+% level2 date function
+(%Calendar%) /IODevice resourcestatus {
+	pop pop (%Calendar%) currentdevparams
+	dup /Running get { /timedict exch def
+		[ 
+     	timedict /Year get 4 string cvs {} forall 45
+     	timedict /Month get 2 string cvs {} forall 45
+     	timedict /Day get 2 string cvs {} forall 32
+     	timedict /Hour get 2 string cvs {} forall 58
+     	timedict /Minute get 100 add 3 string cvs 1 2 getinterval {} forall 58
+     	timedict /Second get 100 add 3 string cvs 1 2 getinterval {} forall
+     	]
+		makestring dup == /StartTime$ exch def
+	}{
+     (Clock/calendar is present but not running.\n) print
+   } ifelse
+ } {
+   (No clock/calendar present.\n) print
+ } ifelse
+
+
+%quick and dirty proc for making a sort of timestamp
+/TimeStamp {
+(%Calendar%) currentdevparams begin
+10 dict begin  % make a local dictionary for constants
+/SEC_PER_HOUR 60 60 mul def
+/SEC_PER_DAY SEC_PER_HOUR 24 mul def 
+/SEC_IN_MONTH [0 2678400 5097600 7776000 10368000 13046400 15638400 18316800 20995200 23587200 26265600 28857600] def
+
+Year 1970 sub 365.2425 mul SEC_PER_DAY mul cvi % approximate the number of seconds since 0 time
+SEC_IN_MONTH Month 1 sub get cvi add  % add in the seconds to the first of the month
+Day 1 sub SEC_PER_DAY mul cvi add % seconds to midnight the prior day
+Hour SEC_PER_HOUR mul cvi add
+Minute 60 mul cvi add
+%	(->) print pstack (<-) =	
+Second add 
+%	(->) print pstack (<-) =	
+cvi 16 8 string cvrs
+
+end
+end
+} bind def
+% functions for decoding the input stream
+
+/initIO {
+
+	tf read	not {exit} if	% read low byte 
+	tf read	not {exit} if	% read high byte
+	8 bitshift or
+
+	/key exch def
+	
+verbose {(\nkey: 0x) print key 16 =string cvrs = } if
+
+} bind def
+
+/nextKeyNumber {
+	/paramInt key def
+
+	17 {
+		/j 0 def
+		paramInt 16#20 and 0 ne {/j 1 def}	if
+		paramInt 16#08 and 0 ne {/j j 1 add def}if	
+		paramInt 16#04 and 0 ne {/j j 1 add def}if	
+		paramInt 16#01 and 0 ne {/j j 1 add def}if
+		
+		/paramInt paramInt -1 bitshift def
+		
+		j 16#1 and 0 ne {/paramInt paramInt 32768 add def}if
+			
+	} repeat
+
+	/key paramInt def
+
+} bind def
+
+
+/read1 {
+
+	tf read	not {exit} if	% read i
+	
+	nextKeyNumber
+
+	key xor 255 and
+	
+} bind def
+
+/read2 {
+	tf read	not {exit} if	% read i
+	tf read	not {exit} if	% read j
+	8 bitshift or			% j << 8			
+
+	nextKeyNumber
+
+	key xor 65535 and 
+
+} bind def
+
+/read3 {
+
+	
+	tf read	not {exit} if	% read i
+	tf read	not {exit} if	% read j
+	8 bitshift or			% j << 8			
+	tf read	not {exit} if	% read k
+	16 bitshift or			% k << 16
+
+	/m exch def
+	
+	nextKeyNumber 
+
+	/n key 16 bitshift def
+	
+	nextKeyNumber
+
+	/n n key or def
+	
+	/m m n xor def
+
+	/m m 16777215 and def %0xFFFFFF
+
+	m 16#800000 and 0 ne {/m m -16777216 or def }if % 0xFF000000
+
+	m
+	
+	
+} bind def
+
+
+% constant lookup tables
+
+/SCHFILE 16#5678 def
+/CMPFILE 16#5685 def
+/PCBFILE 16#B9C7 def
+/FPTFILE 16#7DF8 def
+
+
+/DIRECTION [0 0 270 180 90] def 
+
+/KI_DIRECTION [
+	( 1   0    0    1\n) % degenerate 0
+	( 1   0    0    1\n) % 0 rotate
+	( 0  -1    1    0\n) % -90 rotate 
+	(-1   0    0   -1\n) % -180 
+	( 0   1   -1    0\n) % -270
+	] def 
+
+/PS_DIRECTION [
+	[ 1   0    0    1  0 0] % degenerate 0
+	[ 1   0    0    1  0 0] % 0 rotate
+	[ 0   -1   1    0  0 0] % -90 rotate 
+	[-1   0    0   -1  0 0] % -180 
+	[ 0   1   -1    0  0 0] % -270
+	] def 
+
+
+/TX_DIRECTION [
+	[ 1   0    0    1  0 0] % degenerate 0
+	[ 1   0    0   -1  0 0] % 0 rotate
+	[ 0   -1   1    0  0 0] % -90 rotate 
+	[-1   0    0   -1  0 0] % -180 
+	[ 0   1   -1    0  0 0] % -270
+	] def 
+
+
+
+/ORENTATION [(H) (H) (V) (H) (V)] def  % Kicad text orentation
+
+/FONT [/notdef /PLAIN /BOLD] def
+
+/ARC [ 0 360 300 210 180 90 -90 ] def
+
+/ARC_SHAPE [[0 3600] dup  [1200 600]  [1650 150]  [1801 3599] [2250 3150] [2700 0]] def
+
+/K_ARC_DIRECTION [
+	[[0 3600] dup  [1200 600]  [1650 150]  [1801 3599] [2250 3150] [2700 0]  ] % 0
+	[[0 3600] dup  [300 3300]  [750 2850]  [901 2699]  [1350 2250] [1800 2700]] % 270
+	[[0 3600] dup  [3000 2400] [3450 1950] [1 1799] [450 1350]  [900 1800] ] % ]180
+	[[0 3600] dup  [2100 1500] [2550 1050] [2701 899]  [3150 450]  [0 900]   ] % 90
+] def
+
+
+/COMPONENT_TYPE [/notdef /titleBlockType /componentType /symbolType /footprintType /notdef] def
+
+
+
+%*fields Properties
+%-Reference
+/isNumber << % >>
+	/48 0
+	/49	1
+	/50	2
+	/51	3
+	/52	4
+	/53	5
+	/54	6
+	/55	7
+	/56 8
+	/56 9
+>> def
+
+%16#DF  toupper mask
+
+
+
+/decomposeRef {
+
+	/instance 0 def
+	/isMultiGate false def 
+	/libRefTxtSfx (_expressPCB) def
+	/origRefTxtCnt 0 def  % count of text bytes in reference name 
+	
+	dup /origRefTxt exch def % so we can get the prefix back
+
+	mark exch
+	dup length 1 sub -1 0 { 1 index exch get exch} for pop
+%	counttomark 0 gt {
+			
+		counttomark {
+		
+			isNumber 1 index =string cvs cvn 2 copy known{
+				pop pop exit  % is a number
+			}{
+				pop pop % not a number
+				origRefTxt origRefTxtCnt 3 -1 roll 16#DF and put
+				
+				/origRefTxtCnt origRefTxtCnt 1 add def
+			}ifelse
+		} repeat
+	
+		counttomark {
+		
+			isNumber 1 index =string cvs cvn 2 copy known {
+				get instance 10 mul add /instance exch def
+				pop
+			}{
+				pop pop 
+				counttomark 0 gt { 
+					% how to handle multiple gate components
+					16#DF and ] makestring /GateSfx exch def
+					/isMultiGate true def
+					mark
+				}if 
+				exit
+			}ifelse
+	
+		} repeat
+%	} if
+	pop 
+	%origRefTxtCnt 0 gt {
+	origRefTxt 0 origRefTxtCnt getinterval
+	/newRefTxt exch def
+	 newRefTxt dup length libRefTxtSfx length add string dup
+	3 -1 roll 0 exch putinterval dup origRefTxtCnt libRefTxtSfx putinterval /libRefTxt exch def
+	
+	%}if 
+	
+} bind def
+%-Value
+%~when unknown
+%-Footprint
+%~when unknown
+%-Datasheet
+%~when unknown
+
+%#PWR for power pins -- handle symbols  separatly
+
+
+
+
+
+/getAttributes {
+
+	/paramInt exch def
+		
+		verbose  {
+		paramInt qdbp 
+		% split it out
+		dup 0 12 getinterval print ( ) print
+		dup 12 1 getinterval print ( ) print
+		%dup 13 1 getinterval print ( ) print
+		13 3 getinterval print (b) =
+		} if
+		%FDECBA987654 3 2 10
+		%0123456789AB C D EF
+		%ssssssssssss
+
+	/TextAttributes << % >>
+	
+		/attrib_vis paramInt 16#08 and 0 ne
+	
+		/attrib_dir paramInt 7 and
+	
+		/attrib_size paramInt -4 bitshift 
+	
+		/attrib_style 1 def		% fixed style
+		
+		/Object /attributesType 
+	
+	>> def
+	
+	verbose   {
+	TextAttributes begin
+	(TextAttributes: d:) print 
+	DIRECTION attrib_dir get =string cvs print
+	
+	( s:) print attrib_size =string cvs print
+	
+	( f:) print attrib_style =string cvs print
+	
+	( v:) print attrib_vis =string cvs =
+	
+	end
+	} if
+
+} bind def
+
+
+
+
+/createAddModule {
+	% creates or adds to a sub group keeping track of the bounding box
+	/objectDict exch def
+	
+	/groupRef groupID =string cvs cvn def
+
+	modules groupRef 2 copy known {
+			get % existing component directory			
+	}{
+			10 dict dup 4 1 roll put % creates a new group dictionary
+	} ifelse
+	begin	%open component dictionary
+			
+	% calculate the new bounding box just for pins
+	% this will be used to detect component rotation and orentation
+	objectDict /Object get /padType eq {
+%	(is pin:) =
+		currentdict /minX known 
+		objectDict begin
+		{
+%		(has bbox) =
+			minX lbb1X min
+			minY lbb1Y min
+			
+			maxX lbb2X max
+			maxY lbb2Y max
+
+		}{
+			lbb1X 
+		    lbb1Y 
+			
+		    lbb2X 
+		    lbb2Y 
+
+		} ifelse
+		end
+%	(->) print pstack (<-) =	
+		/maxY exch def
+		/maxX exch def
+		
+		/minY exch def
+		/minX exch def
+	} if
+
+	localRef objectDict def 
+		
+	end
+} bind def
+
+
+
+/renderPCB << % >>
+
+	/footprintType {
+ 
+ 		%/y2
+		%/x2
+		%/y1 
+		%/x1
+		%/refAttrib
+		%/refTxt
+		%/valueTxt
+
+ 
+		refAttrib getAttributes
+		TextAttributes %dup dfa 
+		begin
+
+		attrib_vis pop true
+		{
+			gsave
+
+
+			DisplayFont %attrib_size 1.3 mul selectfont % rotate text context
+			true {
+				findfont 
+				%PS_DIRECTION  attrib_dir get
+				[attrib_size 1.5 mul  0 0 attrib_size 1.5 mul neg 0 0] 
+				%matrix concatmatrix
+				makefont setfont
+			}if 
+			 
+			x1 y1 drawMatrix transform 	translate
+			gsave
+			%2 copy translate
+			0 1 1 setrgbcolor
+			0 setlinewidth
+			-30 0 moveto 30 0 lineto
+			0 -30 moveto 0 30 lineto stroke
+			
+			grestore
+			PS_DIRECTION  attrib_dir get concat
+			%attrib_size add
+			
+			0 attrib_size moveto refTxt show
+							
+			grestore
+		} if
+		end	
+	
+	}
+
+	/outlineType { verbose {(render board outline) = } if
+	gsave
+		0 setlinewidth
+	
+		x1 y1 drawMatrix transform moveto
+		modules parent get to get begin 
+		x1 y1 drawMatrix transform lineto
+		end
+		stroke
+		
+		% optionally flags can show us the anchor point
+		
+	grestore
+	}
+
+	/padType {
+	gsave
+verbose {(render pad: ) = flush	} if	
+		%/aperture exch def
+		%/drillSize exch def
+		%/h exch def
+		%/w exch def
+		%/y1 exch def
+		%/x1 exch def 
+		%/layerOptions 
+		%/padNumber 
+	
+		aperture =string cvs cvn << % > 
+			/1 { %via 
+			
+				x1 y1 drawMatrix transform w 2 div 0 360 arc fill		
+			}
+			
+			/2 {% round
+			
+				x1 y1 drawMatrix transform w 2 div 0 360 arc fill
+		
+			}
+			
+			/3 {% square
+			
+				x1 w 2 div sub y1 h 2 div sub drawMatrix transform  
+				w h rectfill
+			
+			}
+			
+			/4 {
+				% rectangle - possibly  surface pad 
+				x1 w 2 div sub y1 h 2 div sub drawMatrix transform  
+				w h rectfill
+		
+			}
+			
+			% pre version 7 do not have dynamic pad shapes
+			% can decoded them here or at parse time 
+			
+		>> exch 2 copy known {
+			get exec
+		}{
+			
+			(pad Number: ) print padNumber  ==
+			(aperture key: ) print ==
+			pop
+			% default pad
+			x1 y1 drawMatrix transform 65 2 div 0 360 arc fill
+					
+		}ifelse
+
+	
+		drillSize 0 gt {
+		gsave
+			0 0 0 setrgbcolor
+			x1 y1 drawMatrix transform drillSize 2 div 0 360 arc fill
+		grestore
+		}if 
+
+		innerconnect 0 ne {
+			%/var_18 innerconnect 7 and def  (var_18: ) print var_18 ==
+			gsave
+
+			x1 y1 drawMatrix transform translate
+
+			innerconnect -5 bitshift 3 and dup
+			1 eq {
+				0 1 1 setrgbcolor
+				30 rotate 
+				-100 0 moveto 100 0 lineto stroke			
+				0 -100 moveto 0 100 lineto stroke			
+			}if 
+			2 eq {
+				1 0 1 setrgbcolor
+				45 rotate 
+				-100 0 moveto 100 0 lineto stroke			
+				0 -100 moveto 0 100 lineto stroke			
+			}if
+		
+			innerconnect -3 bitshift 3 and dup 
+			1 eq {
+				1 1 0 setrgbcolor
+				30 rotate 
+				-100 0 moveto 100 0 lineto stroke			
+				0 -100 moveto 0 100 lineto stroke			
+			}if 
+			2 eq {
+				1 0 0 setrgbcolor
+				45 rotate 
+				-100 0 moveto 100 0 lineto stroke			
+				0 -100 moveto 0 100 lineto stroke			
+			}if
+							
+			grestore
+		
+		} if
+
+	grestore
+	
+	}
+
+
+	/lineType {
+	gsave
+		
+		thick setlinewidth
+		
+		x1 y1 drawMatrix transform moveto
+		x2 y2 drawMatrix transform lineto stroke				
+	
+	grestore
+    }
+
+	/arcType {
+	gsave
+	verbose {(arc render) =
+	currentdict dfa 
+	} if
+
+%(arc direction: ) print arc_dir ==
+%(->) print pstack (<) =	
+		thick setlinewidth
+	
+		x1 y1 drawMatrix transform radius 
+		K_ARC_DIRECTION arc_dir 1 sub get shape get  {10 div} forall
+		arc stroke
+
+%		x1 y1 drawMatrix transform translate
+%		DIRECTION arc_dir get rotate
+%		0 0 radius 
+%		%K_ARC_DIRECTION arc_dir 1 sub get
+%		ARC_SHAPE shape get  {10 div} forall
+%		arc stroke
+			
+
+	verbose {(/arc render) =} if 
+	grestore
+	}
+	
+	/textType {
+	gsave
+		% old style render 
+		x1 y1 drawMatrix transform translate
+		%1 -1 scale % invert the context
+		
+		% choose font normal/bold/italic
+		DisplayFont findfont 
+		%/Courier findfont
+		[attrib_size 1.3 mul 0 0 attrib_size 1.3 mul neg 0 0] makefont setfont
+	
+		% rotate text context
+		PS_DIRECTION attrib_dir get concat 
+		0 attrib_size  moveto
+	
+		% draw the text
+		displayText show
+	
+	grestore	
+	}
+	
+	/polyFillType {
+	gsave
+	 
+	 keepOutZone 2 eq {
+	 	1 0 0 setrgbcolor
+	 
+	 } if
+	 
+	 [65] 0 setdash
+	 
+	 newpath
+	 poly 0 get cvx exec drawMatrix transform moveto
+	 poly {cvx exec lineto} forall
+	 closepath
+	 stroke
+	
+	grestore
+	}
+	
+	/rectFillType {
+	gsave
+	
+		x1 y1 drawMatrix transform  
+		x2 x1 sub y2 y1 sub  rectfill
+
+	grestore
+	}
+
+>> def
+
+
+	
+
+
+
+
+/sub_417744 {
+
+% most information thrown away
+%;var_C= dword ptr -0Ch
+%;var_8= dword ptr -8
+%;var_4= word ptr	-4
+
+
+		read3 dup dup 16 =string cvrs print (h ) print ==
+		/var_8 exch def
+
+		read3 dup dup 16 =string cvrs print (h ) print ==
+		/var_C exch def	
+
+		read2 dup dup (Layers: ) print 16 =string cvrs print (h ) print == % Layers
+		/word_426E62 exch def
+		
+		read2 dup dup (Clearance 1:) print 16 =string cvrs print (h ) print == 
+		/word_426E60 exch def 
+
+		read2 dup dup (Clearance 2:) print 16 =string cvrs print (h ) print == % might also be a trace width
+		/word_426D40 exch def
+
+		read2 dup (Default Via: ) print 16 =string cvrs print (h ) print ==
+		
+		read2 dup  16 =string cvrs print (h ) print ==
+
+		read2 dup  16 =string cvrs print (h ) print ==
+
+
+%	rdStrNode
+		read2 (linked schematic: ) print  %dup dup 16 =string cvrs print (h ) print ==
+		dup string /dword_426E64 exch def
+
+		0 1 3 -1 roll 1 sub {
+			dword_426E64 exch read2 16#FF and put
+		} for
+		 
+		dword_426E64 ==
+
+		22 { 
+			read2 dup  16 =string cvrs print (h ) print == 
+		} repeat
+
+
+} bind def
+
+
+/qdbp {
+% quick and dirty binary print
+ 16#10000 or 2 =string cvrs 1 16 getinterval
+} bind def
+
+%PCB sub functions
+
+/drillMap {
+
+	<< % >> drill map dictionary
+
+	0 		{ 0 }
+	135 	{ 8 }
+	200		{ 14 }
+	260		{ 20 }
+	310		{ 25 }
+	350		{ 29 }
+	390		{ 33 }
+	420		{ 35 }		% 35 which is our target hole diameter
+
+
+	% these need fixing 
+	
+	
+	
+	%{ // case 2
+	%loc_416F1B:
+	%mov	ax, 28h		% 37
+	%}
+
+	465		{ 40 }
+
+
+	%{ // case 3
+	%loc_416F21:
+	%mov	ax, 2Bh		% 43
+
+	%} 
+
+	%loc_416F27:
+	%{ // case 4
+	%mov	ax, 2Eh		% 46
+
+	%{ // case 5
+	%loc_416F2D:
+	%mov	ax, 34h		% 52
+
+	%}
+
+
+	670		{ 61 }
+
+	730		{16#43 }
+
+	860		{16#4F }
+
+	935		{16#58 }
+
+	995		{16#5D }
+
+	1065	{16#64 }
+
+	1160	{16#6E }
+
+	1319	{16#7D }
+
+	1470	{16#8D }
+
+	1570	{16#96 }
+
+	1730	{16#0A7 }
+
+	1990	{16#0C0 }
+
+	2570	{16#0F }
+
+	>> exch 2 copy known {
+		get exec
+	}{ 
+		(unable to resolve drill size: ) print == pop 
+		0
+	}ifelse
+} bind def
+
+
+/LineWidthMap [ 0 10 12 15 20 25 30 40 50 60 80 100 120 150 8 7 200 250 6 ] def
+
+/LibApertureMap << % >
+
+	6 { % 65 35 round 
+			/var_48 100 def
+			/var_8  56 def  % w
+			/var_3C 56 def  % h
+			/var_20 29 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def  % board inner connect options
+	
+	}
+	
+	7  { % 65 35 square 
+			/var_48 100 def
+			/var_8  56 def  % w
+			/var_3C 56 def  % h
+			/var_20 29 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+
+	8 { % 65 35 round 
+			/var_48 100 def
+			/var_8  65 def  % w
+			/var_3C 65 def  % h
+			/var_20 35 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def  % board inner connect options
+	
+	}
+	
+	9 { % 65 35 square 
+			/var_48 100 def
+			/var_8  65 def  % w
+			/var_3C 65 def  % h
+			/var_20 35 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	10 { % 80 35 round 
+			/var_48 100 def
+			/var_8  80 def  % w
+			/var_3C 80 def  % h
+			/var_20 35 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	11{ % 80 35 square 
+			/var_48 100 def
+			/var_8  80 def  % w
+			/var_3C 80 def  % h
+			/var_20 35 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	12 { % 100 35 round 
+			/var_48 100 def
+			/var_8  100 def  % w
+			/var_3C 100 def  % h
+			/var_20 35 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	13 { % 100 35 square 
+			/var_48 100 def
+			/var_8  100 def  % w
+			/var_3C 100 def  % h
+			/var_20 35 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	14 { % 100 46 round 
+			/var_48 100 def
+			/var_8  100 def  % w
+			/var_3C 100 def  % h
+			/var_20 46 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	15 { % 100 46 square 
+			/var_48 100 def
+			/var_8  100 def  % w
+			/var_3C 100 def  % h
+			/var_20 46 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+		
+	16 { % 115 52 round 
+			/var_48 100 def
+			/var_8  115 def  % w
+			/var_3C 115 def  % h
+			/var_20 52 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	18 { % 150 79 round 
+			/var_48 100 def
+			/var_8  150 def  % w
+			/var_3C 150 def  % h
+			/var_20 79 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	19 { % 150 79 square 
+			/var_48 100 def
+			/var_8  150 def  % w
+			/var_3C 150 def  % h
+			/var_20 79 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	20 { % 180 125 round 
+			/var_48 100 def
+			/var_8  180 def  % w
+			/var_3C 180 def  % h
+			/var_20 125 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	22 { % 250 125 round 
+			/var_48 100 def
+			/var_8  250 def  % w
+			/var_3C 250 def  % h
+			/var_20 125 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	26 { % 250 150 round 
+			/var_48 100 def
+			/var_8  250 def  % w
+			/var_3C 250 def  % h
+			/var_20 150 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	28 { % 130 79 round 
+			/var_48 100 def
+			/var_8  130 def  % w
+			/var_3C 130 def  % h
+			/var_20 79 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	29 { % 130 79 square 
+			/var_48 100 def
+			/var_8  130 def  % w
+			/var_3C 130 def  % h
+			/var_20 79 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	32 { % 16 80 top
+			/var_48 10 def
+			/var_8  16 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+
+	33 { % 16 80 bot
+			/var_48 20 def
+			/var_8  16 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	34 { % 24 94 top
+			/var_48 10 def
+			/var_8  24 def  % w
+			/var_3C 94 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	35 { % 24 94 bot
+			/var_48 20 def
+			/var_8  24 def  % w
+			/var_3C 94 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+					
+	40 { % 55 60 top
+			/var_48 10 def
+			/var_8  55 def  % w
+			/var_3C 60 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	41 { % 55 60 bot
+			/var_48 20 def
+			/var_8  55 def  % w
+			/var_3C 60 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+			
+	42 { % 64 64
+			/var_48 10 def
+			/var_8  64 def  % w
+			/var_3C 64 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	43 { % 64 64
+			/var_48 20 def
+			/var_8  64 def  % w
+			/var_3C 64 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	48 { % 90 120 top
+			/var_48 20 def
+			/var_8  90 def  % w
+			/var_3C 120 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+		
+	49 { % 90 120 bot
+			/var_48 10 def
+			/var_8  90 def  % w
+			/var_3C 120 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	53 { % 75 46 round 
+			/var_48 100 def
+			/var_8  75 def  % w
+			/var_3C 75 def  % h
+			/var_20 46 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+		
+	59 { % 160 125 round 
+			/var_48 100 def
+			/var_8  160 def  % w
+			/var_3C 160 def  % h
+			/var_20 125 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	61 { % 25 35 top
+			/var_48 10 def
+			/var_8  25 def  % w
+			/var_3C 35 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	62 { %25 35 bot
+			/var_48 20 def
+			/var_8  25 def  % w
+			/var_3C 35 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	63 { % 30 30 top
+			/var_48 10 def
+			/var_8  30 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	64 { %30 30 bot
+			/var_48 20 def
+			/var_8  30 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	65 { % 100 100 top
+			/var_48 10 def
+			/var_8  100 def  % w
+			/var_3C 100 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+		
+	66 { % 100 100 bot
+			/var_48 20 def
+			/var_8  75 def  % w
+			/var_3C 90 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	69 { % 10 70 top
+			/var_48 10 def
+			/var_8  10 def  % w
+			/var_3C 70 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	70 { % 10 70 bot
+			/var_48 20 def
+			/var_8  10 def  % w
+			/var_3C 70 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+			
+	71 { % 12 80 top
+			/var_48 10 def
+			/var_8  12 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	72 { % 12 80 bot
+			/var_48 20 def
+			/var_8  12 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+			
+	78 { % 62 29 round 
+			/var_48 100 def
+			/var_8  62 def  % w
+			/var_3C 62 def  % h
+			/var_20 29 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	79 { % 62 29 square 
+			/var_48 100 def
+			/var_8  62 def  % w
+			/var_3C 62 def  % h
+			/var_20 29 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	80 { % 65 130 top
+			/var_48 10 def
+			/var_8  65 def  % w
+			/var_3C 130 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	81 { % 65 130 bot
+			/var_48 20 def
+			/var_8  65 def  % w
+			/var_3C 130 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+		
+	90 { % 75 40 round 
+			/var_48 100 def
+			/var_8  75 def  % w
+			/var_3C 75 def  % h
+			/var_20 40 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	91 { % 75 40 square 
+			/var_48 100 def
+			/var_8  75 def  % w
+			/var_3C 75 def  % h
+			/var_20 40 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+		
+	92 { % 88 40 round 
+			/var_48 100 def
+			/var_8  88 def  % w
+			/var_3C 88 def  % h
+			/var_20 40 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	93 { % 88 40 square 
+			/var_48 100 def
+			/var_8  88 def  % w
+			/var_3C 88 def  % h
+			/var_20 40 def  % drillSize
+			/var_1C  3 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+	94 { % 110 61 round 
+			/var_48 100 def
+			/var_8  110 def  % w
+			/var_3C 110 def  % h
+			/var_20 61 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+
+		
+	102 { % 150 93 round 
+			/var_48 100 def
+			/var_8  150 def  % w
+			/var_3C 150 def  % h
+			/var_20 93 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  0 def   % board inner connect options
+	}
+	
+	128 { % 24 30 top
+			/var_48 10 def
+			/var_8  24 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	129 { % 24 30 bot
+			/var_48 20 def
+			/var_8  24 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+
+	130 { % 26 40 top
+			/var_48 10 def
+			/var_8  26 def  % w
+			/var_3C 40 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	131 { % 26 40 bot
+			/var_48 20 def
+			/var_8  26 def  % w
+			/var_3C 40 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+
+	132 { % 30 40 top
+			/var_48 10 def
+			/var_8  30 def  % w
+			/var_3C 40 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	133 { % 30 40 bot
+			/var_48 20 def
+			/var_8  30 def  % w
+			/var_3C 40 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	138 { % 40 60 top
+			/var_48 10 def
+			/var_8  40 def  % w
+			/var_3C 60 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	139 { % 40 60 bot
+			/var_48 20 def
+			/var_8  40 def  % w
+			/var_3C 60 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+	
+	140 { % 250 250 top
+			/var_48 10 def
+			/var_8  250 def  % w
+			/var_3C 250 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	141 { % 250 250 bot
+			/var_48 20 def
+			/var_8  250 def  % w
+			/var_3C 250 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	142 { % 420 420 top
+			/var_48 10 def
+			/var_8  420 def  % w
+			/var_3C 420 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	143 { % 420 420 bot
+			/var_48 20 def
+			/var_8  420 def  % w
+			/var_3C 420 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8222 { % 80 14 top
+			/var_48 10 def
+			/var_8  80 def  % w
+			/var_3C 14 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8223 { % 80 14 bot
+			/var_48 20 def
+			/var_8  80 def  % w
+			/var_3C 14 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+			
+	8224 { % 80 16 top
+			/var_48 10 def
+			/var_8  80 def  % w
+			/var_3C 16 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8225 { % 80 16 bot
+			/var_48 20 def
+			/var_8  80 def  % w
+			/var_3C 16 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+			
+	8226 { % 94 24 top
+			/var_48 10 def
+			/var_8  94 def  % w
+			/var_3C 24 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8227 { % 94 24 bot
+			/var_48 20 def
+			/var_8  94 def  % w
+			/var_3C 24 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+			
+	8228 { % 80 26 top
+			/var_48 10 def
+			/var_8  80 def  % w
+			/var_3C 26 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8229 { % 80 26 bot
+			/var_48 20 def
+			/var_8  80 def  % w
+			/var_3C 26 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+		
+	8230 { % 40 50 top
+			/var_48 10 def
+			/var_8  40 def  % w
+			/var_3C 50 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8231 { % 40 50 bot
+			/var_48 20 def
+			/var_8  40 def  % w
+			/var_3C 50 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+		
+	8236 { % 70 100 top
+			/var_48 10 def
+			/var_8  70 def  % w
+			/var_3C 100 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8237 { % 70 100 bot
+			/var_48 20 def
+			/var_8  70 def  % w
+			/var_3C 100 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8238 { % 90 75 top
+			/var_48 10 def
+			/var_8  90 def  % w
+			/var_3C 75 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+		
+	8239 { % 75 90 bot
+			/var_48 20 def
+			/var_8  75 def  % w
+			/var_3C 90 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8255 { % 30 30 top
+			/var_48 10 def
+			/var_8  30 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8256 { % 30 30 bot
+			/var_48 20 def
+			/var_8  30 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+				
+	8261 { % 70 10 top
+			/var_48 10 def
+			/var_8  70 def  % w
+			/var_3C 10 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8262 { % 70 10 bot
+			/var_48 20 def
+			/var_8  70 def  % w
+			/var_3C 10 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+			
+	8263 { % 80 12 top
+			/var_48 10 def
+			/var_8  80 def  % w
+			/var_3C 12 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8264 { % 80 12 bot
+			/var_48 20 def
+			/var_8  80 def  % w
+			/var_3C 12 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+			
+	8272 { % 130 65 top
+			/var_48 10 def
+			/var_8  130 def  % w
+			/var_3C 65 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8273 { % 130 65 bot
+			/var_48 20 def
+			/var_8  130 def  % w
+			/var_3C 65 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+		
+	8274 { % 200 80 top
+			/var_48 10 def
+			/var_8  200 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8275 { % 200 80 bot
+			/var_48 20 def
+			/var_8  200 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+		
+	8276 { % 250 80 top
+			/var_48 10 def
+			/var_8  250 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8277 { % 250 80 bot
+			/var_48 20 def
+			/var_8  250 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	8326 { % 50 30 top
+			/var_48 10 def
+			/var_8  50 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	16414 { % 14 80 top
+			/var_48 10 def
+			/var_8  14 def  % w
+			/var_3C 80 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	16512 { % 24 30 top
+			/var_48 10 def
+			/var_8  24 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	16513 { % 24 30 bot
+			/var_48 20 def
+			/var_8  24 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	16515 { % 26 40 bot
+			/var_48 20 def
+			/var_8  26 def  % w
+			/var_3C 40 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	16517 { % 30 40 bot
+			/var_48 20 def
+			/var_8  30 def  % w
+			/var_3C 40 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	16453 { % 70 10 top
+			/var_48 10 def
+			/var_8  10 def  % w
+			/var_3C 70 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	24623 { % 90 75 bot
+			/var_48 20 def
+			/var_8  90 def  % w
+			/var_3C 75 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	24639 { % 30 30 top
+			/var_48 10 def
+			/var_8  30 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	24610 { % 94 24 top
+			/var_48 10 def
+			/var_8  94 def  % w
+			/var_3C 24 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	24618 { % 64 64 top
+			/var_48 10 def
+			/var_8  64 def  % w
+			/var_3C 64 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	24640 { % 30 30 bot
+			/var_48 20 def
+			/var_8  30 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	24647 {% 80 12 top
+			/var_48 10 def
+			/var_8  80 def  % w
+			/var_3C 12 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+	24711 { % 50 30 bot
+			/var_48 20 def
+			/var_8  50 def  % w
+			/var_3C 30 def  % h
+			/var_20 0 def  % drillSize
+			/var_1C  4 def	% aperture
+			/var_C  0 def   % board inner connect options	
+	}
+
+
+
+>> def
+
+/maskies {
+
+% mask definitions from Xcheck -- this code used layer dictionaries
+		
+		
+		%8 9A BC DEF
+		%7 65 43 210
+	
+		var_C qdbp 
+		% split it out
+		dup 8 1 getinterval print ( ) print
+		dup 9 2 getinterval print ( ) print
+		dup 11 2 getinterval print ( ) print
+		13 3 getinterval print (b flagByte) =
+	
+		
+		/var_18 var_C 7 and def  (var_18: ) print var_18 ==
+	
+		/var_14 var_C -3 bitshift 3 and def  (var_14: ) print var_14 ==
+	
+		/var_4 var_C -5 bitshift 3 and def  (var_4: ) print var_4 ==
+	
+	
+	% this code may handle layer options
+	
+	% layer mask bitfields
+	%							                        
+	% 							...m ...B...P ..G..T.. ..m..S..
+	% Silk 				0004h	0000 00000000 00000000 00000100
+	% top mask			0020h	0000 00000000 00000000 00100000
+	% top (component)	0400h	0000 00000000 00000100 00000000	
+	% GND 				2000h	0000 00000000 00100000 00000000
+	% PWR			   10000h	0000 00000001 00000000 00000000
+	% bottom (copper) 100000h	0000 00010000 00000000 00000000
+	% bottom mask	 2000000h  	0001 00000000 00000000 00000000
+
+	% 2 layer layer map * 2
+	% silk 				2   << 1  = 4  -> 000100
+	% top (component)  10	<< 1  = 20 -> 010100	
+	% bottom (copper)  20   << 1  = 40 -> 101000
+	
+	
+		/var_40 0 def
+		/var_4C 0 def
+	
+		var_48 100 eq 	%		//  11 bits from first byte 0123456789A .. ...
+		{
+			% var_48 == 100
+			%				  ...B.... .....T.. ........				 
+			%				  00010000 00000100 00000000
+			/var_40 var_40 16#100400 or def
+		
+		
+			word_426E62 4 eq		%// evaluates to layers
+			{
+				% 4 layers
+				/var_40 var_40 16#10000 or def	% PWR
+			
+				/var_40 var_40 16#20 or def		% top mask
+			
+			
+				/var_58 var_18 16#FF and def % low bits of flag options . .. .. DEF
+				
+				%switch var_58 {
+				
+				% case default:
+				% break
+				
+				%case 1:
+				%case 2:
+				var_58 1 eq var_58 2 eq or {
+					/var_4C var_4C 16#10000 or def % PWR
+				}{
+				% break
+				
+					%case 3:
+					%case 4:
+					var_58 3 eq var_58 4 eq or {
+						/var_4C var_4C 16#20 or def % top mask
+					}if
+				} ifelse % switch	
+			}if
+		}{
+			
+			/var_40 var_40 var_48 1 bitshift or def %	//  11 bits from first byte 0123456789A .. ...
+	
+		} ifelse
+	
+	
+		/var_5C var_14 def % // two bits from flags byte . .. BC ...
+		var_5C 0 gt {
+			var_5C 2 le {
+				/var_4C var_4C 4 or def	% silk
+			}if
+		}if
+			
+	
+		/var_60 var_4 def 	%// two bits from flag byte . 9A .. ...
+		var_60 0 gt {
+			var_60 2 gt {
+				/var_4C var_4C 16#100000 or def % bottom copper
+			}if
+		}if
+	
+	
+		(alt Layer mask: ) print var_4C 16#4000000 or 2 =string cvrs 1 26 getinterval print (b) =
+		(Layer mask:     ) print var_40 16#4000000 or 2 =string cvrs 1 26 getinterval print (b) =
+	
+	
+} bind def 
+
+
+/ConnectTxt << % >>
+
+	/BNC 	{ (P***) }
+	/DB		{ (J***) } 	
+	/DB15	{ (J***) } 
+	/DB25	{ (J***) } 
+	/DB37	{ (J***) } 
+	/Power	{ (P***) } 
+	/Jack	{ (J***) } 
+	/Molex,	{ (P***) } 
+	/Ribbon	{ (P***) } 
+	/Ribbon,	{ (P***) } 
+	/RJ11-4	{ (P***) } 
+	/RJ11-6	{ (P***) } 
+	/RJ45-8	{ (P***) } 
+	/USB	{ (P***) } 
+	/Wire	{ (TP**) } 	
+
+>> def
+
+/refTexts << % >>
+
+	/Cap { 
+
+		token {
+			pop
+			token {
+				dup /Axial eq 1 index /Radial eq 3 -1 roll /Tantalum eq or or {
+					(CP***)
+				}{
+					(C***) 
+				}ifelse
+			}{
+			()		% simulate rest of token
+			(C***) 
+			}ifelse
+		}{
+			()		% simulate rest of token
+			(C***) 
+		}ifelse
+	
+
+	
+	} 
+
+	/Connector {
+		token {
+			pop
+			token {
+				ConnectTxt exch 2 copy known {
+					get exec
+				}{
+				%(->) print pstack (<-) = flush
+					72 string cvs exch pop
+				%(->) print pstack (<-) = flush
+				}ifelse
+			}{
+			()		% simulate rest of token
+			(CON***)
+			}ifelse
+		}{
+			()		% simulate rest of token
+			(CON***)
+			
+		}ifelse
+	}
+	
+	/Crystal {(Y***)}
+	
+	/Diode	{(D***)}
+	
+	/Dip	{ (U***) } 
+	
+	/LED	{ (LED**) } 
+	
+	/PLCC	{ (U***) } 
+	
+	/Potentiometer	{ (RV**) } 
+
+	/Resistor	{ (R***) } 
+
+	/Semiconductor	{ (Q***) } 
+	
+	/Sip	{ (RP***) }
+	
+	/SMT	{ (REF***) } 
+	
+	/Switch	{ (SW***) } 
+
+>> def
+
+
+
+/PCBprocs << % >>
+
+	1 {
+	verbose {(ObjectInfo) =}if
+	/verbose false def
+%(->) print pstack (<-) = flush
+	
+		read1 %dup dup 16 =string cvrs print (h ) print == 
+	
+		COMPONENT_TYPE exch get
+	
+		read3 verbose {dup dup (root:) print 16 =string cvrs print (h ) print == }if
+	
+	%	rdStrNode
+		read2 %dup dup 16 =string cvrs print (h ) print ==
+		dup string /var_8 exch def
+	
+		 0 1 3 -1 roll 1 sub {
+			var_8 exch read2 16#FF and put
+		} for
+		 
+		var_8 verbose { (name: ) print dup == } if
+	
+	%	rdStrNode
+		read2 %dup dup 16 =string cvrs print (h ) print ==
+		dup string /var_18 exch def
+	
+		0 1 3 -1 roll 1 sub {
+			var_18 exch read2 16#FF and put
+		} for
+		 
+		verbose not { (ref: ) print var_18 == } if
+		 
+		var_18 length 0 eq {
+		
+			SubFilename token { 
+			
+			%exch pop %decomposeRef 
+			
+			refTexts  exch 2 copy known {
+				get exec /var_18 exch def pop
+			}{
+				72 string cvs /var_18 exch def pop pop
+			}ifelse
+			%instance 
+			%libRefTxt
+			%origRefTxt
+			%newRefTxt
+			%72 string cvs (***) strcat	/var_18 exch def %newRefTxt (***) strcat def
+			}{
+				/var_18 (REF***) def
+			}ifelse
+		}if
+ 		verbose not { (new ref: ) print var_18 == } if
+ 		var_18
+		 
+		read2 verbose {dup dup (textFlags: ) print 16 =string cvrs print (h ) print ==}if
+	
+		read3 verbose {dup dup (x1: ) print 16 =string cvrs print (h ) print ==}if
+	
+		read3 verbose {dup dup (y1:) print 16 =string cvrs print (h ) print ==}if
+	
+		read2 verbose {dup dup 16 =string cvrs print (h ) print ==}if
+	
+		read2 verbose {dup dup 16 =string cvrs print (h ) print ==}if
+	
+	%(object parsed ) = flush
+	
+		/localModule 10 dict def
+		localModule begin
+	
+		/y2 exch def
+		/x2 exch def
+		/y1 exch def 
+		/x1 exch def
+		/refAttrib exch def
+		/refTxt exch def
+		/valueTxt exch def
+		/firstLink exch def
+		/Object exch def
+	
+		/next	localLink def
+		/parent localGroup def
+		/self	localRef def	
+	
+		% create rotation bounding box
+		/lbb1X x1 def				
+		/lbb1Y y1 def
+	
+		/lbb2X x2 def
+		/lbb2Y y2 def
+	
+		end 
+		
+		% old version or library files do not seem to include the module
+		% in it's own group
+		
+		groupID 0 eq { /groupID objectID def }if
+		
+		localModule createAddModule
+
+%(object created: ) = flush	
+		modules localRef get
+		begin /Root localModule def end 
+%(object loaded: ) = flush	
+		
+		% put it onto the text note layer (to be different)
+		% this really goes onto the silk layer
+		board /25 get localRef localModule put
+%(object marked: ) = flush		
+
+		var_8 length 0 eq {
+			/var_8 SubFilename def
+		}if 
+		/name 
+			[ var_8 {} forall ] makestring % make a copy of the string on the stack
+		
+			 0 1 2 index length 1 sub
+			{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+		
+		 def
+		
+(newObject Name: ) print name ==		
+		
+		$index name cvn modules localRef get put
+		$order oidx name cvn put /oidx oidx 1 add def
+		
+		modules localRef undef
+
+%		localModule dfa
+
+	/verbose false def
+	}
+
+	2 {
+	(proc 2 - outline) = 
+	
+	% looks like a board outline
+	%observed 1 in examples	
+	read1 dup dup 16 =string cvrs print (h ) print ==
+	pop
+
+	%observed 0 in examples
+	read3 dup dup 16 =string cvrs print (h ) print ==
+	pop
+
+	read3 dup dup (x1: ) print 16 =string cvrs print (h ) print ==
+
+	read3 dup dup (y1: ) print 16 =string cvrs print (h ) print ==
+
+	% seems to be -1 or 0 -- probably indicates anchor point
+	read2 dup dup (flag: ) print 16 =string cvrs print (h ) print ==
+
+	read3 dup dup (from: ) print 16 =string cvrs print (h ) print ==
+	=string cvs cvn
+
+	read3 dup dup (to: ) print 16 =string cvrs print (h ) print ==
+	=string cvs cvn
+
+	/localOutline 10 dict def
+	localOutline begin
+
+	/to exch def
+	/from exch def
+	/flag exch def
+	/y1 exch def
+	/x1 exch def
+	
+	/Object /outlineType def
+
+	/next	localLink def
+	/parent localGroup def
+	/self	localRef def	
+	
+	% create rotation bounding box
+	/lbb1X x1 def				
+	/lbb1Y y1 def
+
+	/lbb2X x1 def
+	/lbb2Y y1 def
+	
+	end 
+		
+	localOutline createAddModule
+	
+	
+	% put it onto the text note layer (to be different)
+	% this really goes onto the silk layer
+	board /28 get localRef localOutline put
+	
+	
+	}
+	
+	3 {
+	/verbose false def
+	verbose {(Pad ) =}if
+	
+	read2 
+	/var_2C exch def
+	
+			
+	versionMajor 7 lt {
+				
+		read3 verbose {dup dup (\nx1: ) print 16 =string cvrs print (h ) print =string cvs print ( ) print 
+		dup [ exch dup -16 bitshift exch 16#FFFF and dup -8 bitshift exch 16#FF and ] makestring == }if
+		/var_30 exch def
+	
+		read3 verbose {dup dup (y1: ) print 16 =string cvrs print (h ) print =string cvs print ( ) print 
+		dup [ exch dup -16 bitshift exch 16#FFFF and dup -8 bitshift exch 16#FF and ] makestring == } if
+		/var_38 exch def
+	
+		read2 verbose {dup dup (pin: ) print 16 =string cvrs print (h ) print =string cvs print ( ) print 
+		dup [ exch dup -8 bitshift exch 16#FF and ] makestring == } if
+		/var_24  exch def
+
+	(pin: ) print var_24 ==
+	(apertureMap: ) print var_2C ==
+
+		LibApertureMap var_2C 2 copy known {
+		
+			get exec
+	
+		}{
+			pop pop
+			/var_48 100 def
+			/var_8  65 def  % w
+			/var_3C 65 def  % h
+			/var_20  0 def  % drillSize
+			/var_1C  2 def	% aperture
+			/var_C  16 def  % board inner connect options
+		}ifelse
+
+
+%/errBlock 3 def
+
+	}{
+	
+		verbose {
+			var_2C dup dup (Flags: ) print 16 =string cvrs print (h ) print =string cvs print ( ) print 
+			[ exch dup -8 bitshift exch 16#FF and ] makestring ==
+		
+			var_2C qdbp dup =
+			% split it out
+			dup 0 10 getinterval print ( ) print
+			dup 10 2 getinterval print ( ) print
+			12 4 getinterval print (b var_2C) =
+		
+			%0123456789 AB CDEF
+			%0000001010 00 0100b
+			%0000000000 11 1111
+		}if
+		
+		/var_48 var_2C -6 bitshift def
+		verbose {(var_48 -- layer options: ) print var_48 == } if % something to do with layers
+	
+		/var_34 var_2C -4 bitshift 3 and def
+		verbose {(var_34 -- pad rotation: ) print var_34 == }if  % pad rotation ? 
+	
+		/var_1C var_2C 16#0F and def					% leaves pad shape as a default
+		verbose {(var_1C  -- pad shape: aperture? ) print var_1C =string cvs print ( ) print}if
+	
+		verbose {
+			[[0 0] [1 1] [1 0] [0 0] [0 2] [1 2]] 
+			var_1C  dup 5 gt {pop pop [0 0] }{ {get} stopped {pop pop [0 0] }if }ifelse  dup ==
+			cvx exec /var_44 exch def /var_10 exch def
+		}if
+	
+
+			
+		read2 verbose {dup dup (\nw: ) print 16 =string cvrs print (h ) print ==}if 
+		/var_8 exch def 
+		
+		read2 verbose {dup dup (h:) print 16 =string cvrs print (h ) print == }if
+		/var_3C exch def 
+	
+	
+		read2 verbose {dup dup (\ndrill map: ) print 16 =string cvrs print (h ) print == }if
+		/var_28 exch def 
+		
+		var_28 drillMap /var_20 exch def
+		verbose {(drill size: ) print var_20 ==}if
+	
+	
+		read3 verbose {dup dup (\nx1: ) print 16 =string cvrs print (h ) print == } if
+		/var_30 exch def
+	
+		read3 verbose {dup dup (y1: ) print 16 =string cvrs print (h ) print == }if
+		/var_38 exch def
+	
+		read2 verbose {dup dup (\npinNo: ) print 16 =string cvrs print (h ) print == () =}if
+		/var_24  exch def
+		
+		% this may have something to do with the inner plane connections
+		read1 verbose {dup dup (flagByte: ) print 16 =string cvrs print (h ) print == } if
+		/var_C  exch def
+		
+		verbose { var_C qdbp 
+		% split it out
+		dup 8 1 getinterval print ( ) print
+		dup 9 2 getinterval print ( ) print
+		dup 11 2 getinterval print ( ) print
+		13 3 getinterval print (b flagByte) =
+	
+		
+		/var_18 var_C 7 and def  (var_18: ) print var_18 ==
+	
+		/var_14 var_C -3 bitshift 3 and def  (var_14: ) print var_14 ==
+	
+		/var_4 var_C -5 bitshift 3 and def  (var_4: ) print var_4 ==
+		} if
+	
+	
+		% // two bits from first byte ............ AB ....
+	
+		var_34 1 eq var_34 3 eq or {
+	
+			/var_50 var_8 def		% w & h swap
+		
+			/var_8 var_3C def		
+		
+			/var_3C var_50 def
+	
+		}if
+
+	} ifelse
+
+	var_24 % padNumber
+	var_48 % layerOptions 
+	var_30 % x1
+	var_38 % y1
+	var_8  % w
+	var_3C % h
+	var_20 % drillSize
+	var_1C % aperture
+	var_C  % board inner connect options
+		
+	/localPad 10 dict def
+	localPad begin
+
+	/innerconnect exch def
+	/aperture exch def		% var_1C
+	/drillSize exch def 	% var_20  
+	/h exch def 			% var_3C 
+	/w exch def 			% var_8 
+	/y1 exch def 			% var_38 
+	/x1 exch def 			% var_30 
+	/layerOptions exch def	% var_48
+	/padNumber exch def 	% var_24
+
+	/next	localLink def
+	/parent localGroup def
+	/self	localRef def
+	/Object /padType def
+
+	% create rotation bounding box
+	/lbb1X x1 def				
+	/lbb1Y y1 def
+
+	/lbb2X x1 def
+	/lbb2Y y1 def
+
+	end 
+	
+	localPad createAddModule
+	
+	% place pad into rendering dictionaries
+	
+	board /corners get localRef localPad put
+	
+	var_48 100 eq {			
+		board /0 get localRef localPad put
+		board /15 get localRef localPad put
+
+	}{
+		layerMap var_48 =string cvs cvn 2 copy known {
+			get board exch get localRef localPad put
+		
+		}{
+			exch pop (an undefined expressPCB layer number) = ==
+		
+		}ifelse
+	
+	}ifelse
+	
+	var_20 0 gt {
+		board /drills get localRef localPad put
+
+	} if
+		
+	
+%var_C 0 ne { showpage } if
+			
+			/padCount padCount 1 add def
+	/verbose false def
+	}
+	
+	4 {
+	
+	(proc 4 - "edge") = 
+
+	read3 verbose { dup dup 16 =string cvrs print (h ) print == }if
+	
+	read3 verbose { dup dup 16 =string cvrs print (h ) print == }if
+
+	read1 verbose { dup dup (layer: ) print 16 =string cvrs print (h ) print == }if
+	=string cvs cvn /localLayer exch def
+
+	/localEdge 10 dict def
+	localEdge begin
+	
+	/y1 exch def
+	/x1 exch def
+
+	/next	localLink def
+	/parent localGroup def
+	/self	localRef def
+	/Object /padType def
+
+	% create rotation bounding box
+	/lbb1X x1 def				
+	/lbb1Y y1 def
+
+	/lbb2X x1 def
+	/lbb2Y y1 def
+
+	end 
+	
+	localEdge createAddModule
+	
+	% place pad into rendering dictionaries
+
+	board /corners get localRef localEdge put
+	
+	}
+	
+	5 {
+	(proc 5 -- trace) = 
+	
+	read1 verbose { dup dup 16 =string cvrs print (h ) print == } if
+
+	% /var_10 sub_4170E3 var_4
+	%LineWidthMap
+
+	read1 verbose { dup dup (layer: ) print 16 =string cvrs print (h ) print == } if
+	=string cvs cvn /localLayer exch def
+
+	read2 verbose { dup dup 16 =string cvrs print (h ) print == } if
+
+	read3 verbose { dup dup 16 =string cvrs print (h ) print == } if
+
+	read3 verbose { dup dup 16 =string cvrs print (h ) print == } if
+
+	/localTrace 10 dict def
+	localTrace begin
+	
+	/to exch def
+	/from exch def
+	/flag exch def
+flag 16#FFFF ne {showpage} if	
+	
+	/traceWidth exch def
+
+	/next	localLink def
+	/parent localGroup def
+	/self	localRef def
+	/Object /padType def
+
+	% create rotation bounding box
+	/lbb1X 0 def				
+	/lbb1Y 0 def
+
+	/lbb2X 0 def
+	/lbb2Y 0 def
+
+	end 
+	
+	localTrace createAddModule
+	
+	% place pad into rendering dictionaries
+
+	board /traces get localRef localTrace put
+
+	}
+	
+	6 {
+		(Unknown	code ) print =string cvs print (\n) = pop
+		% flush the file
+		{
+			read1 dup  16 =string cvrs print (h ) print ==
+		}loop
+		/errBlock 6 def 
+	}
+	
+	7 {
+	(text) = 
+	
+	%rdStrNode
+		read2 
+		dup string /localStringBuffer1 exch def
+
+		0 1 3 -1 roll 1 sub {
+			localStringBuffer1 exch read2 16#FF and put
+		} for
+
+			
+		read1 verbose { dup dup 16 =string cvrs print (h ) print == } if
+		=string cvs cvn /localLayer exch def
+
+		read2 verbose { dup dup 16 =string cvrs print (h ) print == } if
+
+		read1 verbose { dup dup 16 =string cvrs print (h ) print == } if
+	
+		read3 verbose { dup dup 16 =string cvrs print (h ) print == } if
+
+		read3 verbose { dup dup 16 =string cvrs print (h ) print == } if
+
+		
+		/localText 10 dict def
+		localText begin
+
+		/y1 exch def
+		/x1 exch def
+		/attrib_style exch def
+		
+		/attrib_dir exch def 
+
+		verbose {
+		attrib_dir qdbp 
+		% split it out
+		dup 0 12 getinterval print ( ) print
+		dup 12 1 getinterval print ( ) print
+		%dup 13 1 getinterval print ( ) print
+		13 3 getinterval print (b TextAttributes) =
+		} if
+
+		
+		/attrib_size  attrib_dir -4 bitshift def
+		/attrib_dir attrib_dir 16#07 and def
+
+		/attrib_vis true def
+
+		/layer localLayer def
+		
+		/displayText localStringBuffer1 def
+		
+		/next	localLink def
+		/parent localGroup def
+		/self	localRef def
+		/Object /textType def
+
+		/lbb1X x1 def
+		/lbb1Y y1 def
+		
+		
+		/lbb2Y lbb1Y attrib_size add def  % used for bbox calculations
+		
+		% enter a fictitious graphic state to calculate bbox widths
+		DisplayFont attrib_size selectfont
+		/lbb2X lbb1X displayText stringwidth pop add def 
+		
+
+		end
+
+		localLayer /2 eq {
+			% move to text layer 
+			
+			board /25 get localRef localText put
+		
+		}{
+			layerMap localLayer 2 copy known {
+				get board exch get localRef localText put
+			
+			}{
+				exch pop (an undefined expressPCB layer number) = ==
+			
+			}ifelse
+		} ifelse
+
+	
+	%/errBlock 7 def 
+	
+	}
+	
+	8 {
+	(proc 8 - rect filled) = % case 8
+	% only rect is left
+	
+
+		read1 verbose { dup dup 16 =string cvrs print (h ) print == }if
+		
+
+		read1 verbose { dup dup (layer: ) print 16 =string cvrs print (h ) print == }if
+		=string cvs cvn /localLayer exch def
+
+		read3 verbose { dup dup 16 =string cvrs print (h ) print == }if
+
+
+		read3 verbose { dup dup 16 =string cvrs print (h ) print == }if
+
+
+		read3 verbose { dup dup 16 =string cvrs print (h ) print == }if
+
+
+		read3 verbose { dup dup 16 =string cvrs print (h ) print == }if
+
+		/localRectFill 10 dict def
+		localRectFill begin
+
+
+		/y2 exch def
+		/x2 exch def
+		/y1 exch def
+		/x1 exch def
+		/layer localLayer def
+		/mistryParameter exch def
+				
+		/next	localLink def
+		/parent localGroup def
+		/self	localRef def
+		/Object /rectFillType def
+
+		% create rotation bounding box
+		/lbb1X x1 def				
+		/lbb1Y y1 def
+	
+		/lbb2X x1 def
+		/lbb2Y y1 def
+		
+		end
+		localRectFill createAddModule
+		
+		
+		layerMap localLayer 2 copy known {
+			get board exch get localRef localRectFill put
+		
+		}{
+			exch pop (an undefined expressPCB layer number) = ==
+		
+		}ifelse
+
+
+
+	}
+	
+	9 {
+	verbose {(Line: ) =}if
+
+		% must be layer
+		read1 verbose {dup dup (layer: ) print 16 =string cvrs print (h ) print ==}if
+		=string cvs cvn /localLayer exch def
+
+		% start and end points
+		read3 verbose {dup dup (x1: ) print 16 =string cvrs print (h ) print ==}if
+
+		read3 verbose {dup dup (y1: ) print 16 =string cvrs print (h ) print ==}if
+
+		read3 verbose {dup dup (x2: ) print 16 =string cvrs print (h ) print ==}if
+
+		read3 verbose {dup dup (y2: ) print 16 =string cvrs print (h ) print ==}if
+
+		% thickness
+		read3 verbose {dup dup (t: ) print 16 =string cvrs print (h ) print ==}if
+		
+		
+		/localLine 10 dict def
+		localLine begin
+	
+		/thick exch def
+		/y2 exch def
+		/x2 exch def
+		/y1 exch def
+		/x1 exch def
+		/layer localLayer def
+				
+		/next	localLink def
+		/parent localGroup def
+		/self	localRef def
+		/Object /lineType def
+
+		% create rotation bounding box
+		/lbb1X x1 def				
+		/lbb1Y y1 def
+	
+		/lbb2X x1 def
+		/lbb2Y y1 def
+		
+		end
+		localLine createAddModule
+		
+		
+		layerMap localLayer 2 copy known {
+			get board exch get localRef localLine put
+		
+		}{
+			exch pop (an undefined expressPCB layer number) = ==
+		
+		}ifelse
+		
+	}
+	
+	10 {
+	(arc) =
+	 % case 10 -- arc
+		
+		%ARC   360 300 210 180 90 /CIRCLE_CORNER 
+		
+		% shape / dir
+		read1 verbose { dup dup 16 =string cvrs print (h ) print ==
+		dup qdbp == } if
+
+		%x1
+		read3 verbose { dup dup (x1: ) print 16 =string cvrs print (h ) print == } if
+
+
+		%y1
+		read3 verbose { dup dup (y1: ) print 16 =string cvrs print (h ) print == } if
+
+
+		%r
+		read3 verbose { dup dup (r: ) print 16 =string cvrs print (h ) print == } if
+
+		%t
+		read3 verbose { dup dup (t: ) print 16 =string cvrs print (h ) print == } if
+
+
+		%l
+		read1 verbose { dup dup (layer: ) print 16 =string cvrs print (h ) print == } if
+		=string cvs cvn /localLayer exch def
+
+
+		/localArc 10 dict def
+		localArc begin
+	
+		/thick exch def
+	
+		/radius exch def
+		/y1 exch def
+		/x1 exch def
+(->) print pstack (<-) =	
+	
+	
+verbose { 		dup qdbp ==  } if
+		/shape exch def
+	
+		/arc_dir shape -5 bitshift  def
+		/shape shape 16#07 and def
+		
+%(ad) print		arc_dir ==
+			
+ 		/layer localLayer def
+				
+		/next	localLink def
+		/parent localGroup def
+		/self	localRef def
+		/Object /arcType def
+      		
+
+		% local bounding box 
+		/lbb1X	x1 radius sub def
+		/lbb1Y	y1 radius sub def
+				
+		/lbb2X	x1 radius add def
+		/lbb2Y	y1 radius add def	
+
+      	  
+       	end
+
+		localArc createAddModule
+
+		
+		layerMap localLayer 2 copy known {
+			get board exch get localRef localArc put
+		
+		}{
+			exch pop (an undefined expressPCB layer number) = ==
+		
+		}ifelse
+
+	}
+	
+	
+	11	{
+	(filled plane) = flush
+	
+		read1 verbose { dup dup (Locked Flag: ) print 16 =string cvrs print (h ) print == } if
+
+		read1 verbose {dup dup (layer: ) print 16 =string cvrs print (h ) print == } if
+		=string cvs cvn /localLayer exch def
+
+		[
+		read2 verbose {(points in plane: ) dup dup 16 =string cvrs print (h ) print == }if
+		{
+			[	
+			read3 verbose {([) print dup dup 16 =string cvrs print (h ) print =string cvs print } if
+	
+			read3 verbose {dup dup 16 =string cvrs print (h ]) print =string cvs print } if
+			]
+		} repeat
+		]
+		
+		/localPoly 10 dict def
+		localPoly begin
+	
+		/poly exch def 
+		/keepOutZone exch def
+			
+ 		/layer localLayer def
+				
+		/next	localLink def
+		/parent localGroup def
+		/self	localRef def
+		/Object /polyFillType def
+      		
+
+		% this would need to be calculated from the path
+
+		% local bounding box 
+		/lbb1X	0 def
+		/lbb1Y	0 def
+				
+		/lbb2X	0 def
+		/lbb2Y	0 def	
+
+      	  
+       	end
+
+		localPoly createAddModule
+
+		
+		layerMap localLayer 2 copy known {
+			get board exch get localRef localPoly put
+		
+		}{
+			exch pop (an undefined expressPCB layer number) = ==
+		
+		}ifelse
+
+
+	
+	}
+
+>> def
+
+
+/print_libfile {
+
+	writefiles {
+		libfileref exch writestring
+	}{
+		print
+	}ifelse
+} bind def
+
+/print_schfile {
+
+	writefiles {
+		schfileref exch writestring
+	}{
+		print
+	}ifelse
+} bind def
+
+
+/print_profile {
+
+	writefiles {
+		profileref exch writestring
+	}{
+		print
+	}ifelse
+} bind def
+
+
+/buildDescription {
+
+	% part reference
+	
+	% converting the id/name  ref/val need to be flexible as
+	% this is built from the schematic.  With a library
+	% there may not be reference or instance field set
+	
+	% this gets complex because parts like 'R' and 'C' are for the most part
+	% interchangeable.  'C' presents problems when 'C' is used for polarized
+	% capacitors rather than CP
+	
+	% diodes 'D' present a special challenge as  LEDs are also diodes
+	% 
+	
+	% connectors plugs, headers and jumpers also tend to have inconsistant
+	% naming with P and J used interchangeable  often the name
+	% reflects the function rather than the part description
+	% (which this program is supposed to assist in the cleanup of.) 
+	
+	
+	(#building part description.) =
+	(#ref/id: ) print id ==
+	
+	(#value/name:) print name ==
+	
+	id length 0 eq {
+		
+		/id (REF*) def
+		/newRefTxt id def
+
+	}{																	
+		
+		id decomposeRef 
+		%instance 
+		%libRefTxt
+		%origRefTxt
+		%newRefTxt
+		
+	
+	}ifelse 
+
+
+	name length 0 eq {
+		
+		/name libRefTxt def
+	
+	}{
+		/whitespace true def
+		name {
+			32 ne { /whitespace false  def exit}if
+		} forall
+		
+		whitespace {
+			/name libRefTxt def
+		}if
+		
+	}ifelse 
+
+
+}bind def
+
+% parse the file
+
+%jSchem reads first 26 bytes
+%xsch treats the first two bytes of the header as a version #
+
+	/var_4 0 def
+	
+	% parse the string to find our filename so we can create a new kicad project
+	/suffix tfd length def
+	mark 47 46 tfd {}forall 
+	{46 eq {exit}{/suffix suffix 1 sub def }ifelse} loop 
+	/filenamepos suffix 1 sub def
+	{47 eq { exit}{/filenamepos filenamepos 1 sub def /suffix suffix 1 sub def }ifelse} loop 
+	{47 eq {exit}{/filenamepos filenamepos 1 sub def }ifelse} loop 
+	
+	] makestring (/.) anchorsearch {pop} if
+	dup ==
+	/PathPrefix exch def
+
+	tfd filenamepos 1 sub suffix filenamepos sub 1 sub getinterval /SubModName exch def
+	
+	
+	SubModName  (.mod) strcat
+	/NewModuleName exch def
+	
+	(NewModuleLibraryName: ) print NewModuleName ==
+	
+	
+	/NewModulePath KiCadDataFolderPfx NewModuleName strcat def
+
+	(outfile folderpath prefix: ) print NewModulePath ==
+
+	
+	writefiles {/modfileref NewModulePath (w) file def}if
+	() =
+		% module groups
+		/modules 10 dict def
+		/$index 10 dict def	% index of part names to build .mod file from 
+		/$order 500 array def
+		/oidx 0 def
+
+tfd
+{
+	/tfn exch def
+	verbose {(processing: ) print tfn ==}if
+	/tf tfn (r) file def 
+
+	/fatalError false def
+
+	/suffix tfn length def
+	mark 47 46 tfn {}forall 
+	{46 eq {exit}{/suffix suffix 1 sub def }ifelse} loop 
+	/filenamepos suffix 1 sub def
+	{47 eq {exit}{/filenamepos filenamepos 1 sub def }ifelse} loop 
+	] makestring (/.) anchorsearch {pop} if
+
+	/PathPrefix exch def
+
+	tfn filenamepos suffix filenamepos sub 1 sub getinterval /SubFilename exch def
+
+% read the header string
+
+	/eHeader 12 string def
+
+	tf eHeader readstring {verbose {(\nraw header: <) print =$}{pop}ifelse}{( failed to read header) =  /var_4 2 def exit} ifelse
+	
+	%0 1  2 3  4 5  6 7  8 9  0 1 
+	%<F87D 3101 0700 0000 0200 0E00>
+	 
+	Word_l$ 1 eHeader 2 2 getinterval putinterval Word_l$ cvx exec
+	verbose {(\nsignature number: ) print ==}{pop}ifelse
+	 
+	(Version: ) print
+	Word_l$ 1 eHeader 4 2 getinterval putinterval Word_l$ cvx exec
+	/versionMajor exch def versionMajor =string cvs print (.) print 
+	
+	Word_l$ 1 eHeader 6 2 getinterval putinterval Word_l$ cvx exec
+	=string cvs print (.) print
+
+	Word_l$ 1 eHeader 8 2 getinterval putinterval Word_l$ cvx exec
+	=string cvs print (.) print
+ 
+	Word_l$ 1 eHeader 10 2 getinterval putinterval Word_l$ cvx exec
+	==
+
+
+	Long_l$ 1 eHeader 0 2 getinterval putinterval Long_l$ cvx exec
+	/fileFormat exch def 	
+	verbose {(\nfile format: ) print fileFormat 16 =string cvrs print (h ) print fileFormat ==} if
+
+	fileFormat FPTFILE gt {
+		fileFormat PCBFILE eq {
+			(\nPCB file) =
+		}{
+			(\n unknown file) =
+			/var_4 3 def
+			
+		}ifelse
+	}{
+		fileFormat FPTFILE eq {
+			verbose {(\nPCB footprint file) =}if
+		
+		}{
+			fileFormat SCHFILE eq {
+				(\nschematic file) =
+				/var_4 3 def
+			
+			}{
+				fileFormat CMPFILE eq {
+					(\nSchematic symbol file) =
+					/var_4 3 def
+				
+				}{
+					(\n unknown file) =
+					/var_4 3 def
+				
+				}ifelse
+			}ifelse
+		} ifelse	
+	}ifelse
+
+
+	fileFormat FPTFILE eq {	
+			% fails with key zero if ne	
+			tf 14 string readstring {verbose {(14 bytes: <) print =$}{pop}ifelse}{( failed to read header) = exit} ifelse 
+	} if
+
+
+	/padCount 0 def
+	
+	
+
+	var_4 0 eq {
+		% seems to indicate that this is a parseable PCB file
+		verbose {(pcb file process) =}if
+		
+		initIO	% reads the key from the file header
+		
+		
+		% init structure in PCB world
+		
+		/word_426E62 2 def % evaluates to layers
+	
+		fileFormat PCBFILE eq {
+			(creating new board image: ) print NewBoardName ==
+		
+			sub_417744 % reads header
+		}{
+			verbose {(New module file: ) print SubFilename ==} if
+			
+			/layerCount 2 def  % are there 4 layer modules?
+
+		} ifelse
+		
+		/errBlock 0 def	% seems to be an index counter
+		
+		
+		% kicad layer mapping
+		/layerMap << % >>
+		
+			/2 /21
+			
+			/20 /0
+			
+			/10 /15
+		
+		>> def
+		
+		/board 10 dict def
+		board begin
+		
+		% kiCad layer mapping
+		
+		% 0 Copper layer
+		% 1 to 14 Inner layers
+		% 15 Component layer
+
+		%16 Copper side adhesive layer
+
+		%Technical layers
+
+		%17 Component side adhesive layer
+		%18 Copper side Solder paste layer
+		%19 Component Solder paste layer
+		%20 Copper side Silk screen layer
+		%21 Component Silk screen layer
+		%22 Copper side Solder mask layer
+		%23 Component Solder mask layer
+		%24 Draw layer (Used for general drawings)
+		%25 Comment layer (Other layer used for general drawings)
+		%26 ECO1 layer (Other layer used for general drawings)
+		%27 ECO2 layer (Other layer used for general drawings)
+		%28 Edge layer. Items on Edge layer are seen on all layers
+		%29 Not yet used
+		%30 Not yet used
+		%31 Not yet used
+		
+				
+		/traces 10 dict def
+		
+		/drills 10 dict def
+		
+		/corners 10 dict def
+		
+		/schematic_nets 10 dict def
+		
+		%copper layer back / bottom
+		/0 10 dict def
+		
+		% component layer front / top
+		/15 10 dict def
+		 
+		% silk screen layer 
+		/21 10 dict def 
+			% silk screen may divide into
+			%24 draw layer (for module names)
+			% may also include a hidden text layer
+		
+		%text and note layer
+		/25 10 dict def  
+		
+		%board edges
+		/28 10 dict def
+		 
+		end	
+		
+		{
+			errBlock 0 gt {exit}if
+		
+			% 	localID] // might be space allocation for returned byte 
+			read3
+			/objectID exch def
+			objectID 0 eq {exit} if
+	
+			read1
+			/code exch def
+	
+			read3
+			/groupID exch def
+			
+			read3
+			/linkID exch def
+			
+			verbose {
+			(\ncode: ) print code =string cvs print 
+			( id: ) print objectID =string cvs print 
+			( group: ) print groupID =string cvs print 
+			( link: ) print linkID ==
+			}if
+			
+			%versionMajor 7 ne { (file too old!) = exit } if  % unable to parse PCBoard versions prior to 7
+										   % without further study
+			
+			/localRef objectID =string cvs cvn def
+			/localGroup groupID =string cvs cvn def
+			/localLink linkID =string cvs cvn def
+			
+			% parse PCB functions
+			PCBprocs code 2 copy known {
+				get exec
+			}{
+				/errBlock errBlock 1 add def
+				(Unknown	code ) print =string cvs print (\n) = pop
+				% flush the file
+				%{
+				%	read1 dup  16 =string cvrs print (h ) print ==
+				%}loop
+			}ifelse
+	
+		}loop	
+		tf closefile
+verbose {(file parsed.) = flush	} if	
+	
+true	{
+% fill background with black -- traditional for board editing 
+render {
+
+	0 0 0 setrgbcolor
+	
+	0 0 612 792 rectfill
+
+
+	306 384 translate  180 rotate
+	72 250 div dup scale 			% view with 150% enlargement 
+	%72 1000 div dup scale 			% normal scale
+	-1 1 scale
+	
+
+	0 1 1 setrgbcolor
+
+	12 setlinewidth
+	
+	1 setlinecap
+	
+	1 setlinejoin
+
+	
+	%-3800 2 div -2500 2 div translate			% mini-board zero
+
+	-3000 0 moveto 3000 0 lineto stroke
+	0 -3000 moveto 0 3000 lineto stroke
+
+} if
+
+	/partCenterArray 2 array def  
+	$index $order oidx 1 sub get get
+	dup /minX known {
+		begin
+			minY maxY minY sub 2 div add
+			minX maxX minX sub 2 div add
+			cvi 10 string cvs partCenterArray 1 3 -1 roll put
+			cvi 10 string cvs partCenterArray 0 3 -1 roll put
+			
+			verbose {(\ncenter point: ) print
+			 partCenterArray { }forall
+			 print ( ) print  print (\n) print } if
+			 %exch
+			 %cvi =string cvs 
+			 %cvi =string cvs print (\n) print
+			
+			 %2 index transform exch == ==
+			 %(->) print pstack (<-) = 
+			 %0 0 2 index transform exch == ==
+			 %minX minY 2 index transform exch == ==
+			
+		end
+	}{
+		(#Warning: ) print id print ( component has no pins) =
+		(0 0\n) print exit
+		%matrix
+	}ifelse
+
+
+
+/drawMatrix 
+
+		partCenterArray {cvx exec neg } forall exch 
+		%matrix translate  dup == 
+		%PS_DIRECTION 1 get 
+		
+
+		%partCenterArray {} forall cvx exec neg exch cvx exec neg 
+		matrix translate 
+		
+%		1 -1 matrix scale
+%		matrix concatmatrix
+
+		
+%		PS_DIRECTION obdir 
+%		get 
+		
+%		matrix concatmatrix
+
+
+
+ def
+%		(->) print pstack (<-) = flush
+
+% render layers back to front
+
+% copper layer
+board /0 get {
+
+begin	
+	123 255 div 104 255 div 238 255 div setrgbcolor
+	
+	renderPCB Object 2 copy known {
+		get exec
+	}{pop pop}ifelse
+end
+%(->) print pstack (<) = flush
+pop 
+} forall
+
+
+% component layer
+board /15 get {
+
+begin	
+	233 255 div 150 255 div 122 255 div setrgbcolor
+	
+	renderPCB Object 2 copy known {
+		get exec
+	}{pop pop}ifelse
+end
+%(->) print pstack (<) = flush
+pop 
+} forall
+
+
+
+% silk layer
+
+board /21 get {
+
+begin	
+	1 1 0 setrgbcolor
+	
+	
+	renderPCB Object 2 copy known {
+		get exec
+	}{pop pop}ifelse
+end
+pop 
+} forall
+
+
+% render text and note layer
+% this may be actually called front draw layer
+
+board /25 get {
+
+begin	
+	1 1 1 setrgbcolor
+	
+	
+	renderPCB Object 2 copy known {
+		get exec
+	}{pop pop}ifelse
+end
+pop 
+} forall
+
+board /28 get {
+
+begin	
+	1 1 0 setrgbcolor
+				
+	renderPCB Object 2 copy known {
+		get exec
+	}{pop pop}ifelse
+end
+pop 
+} forall
+
+
+
+
+showpage
+}if
+	
+		
+	}if 
+	
+	
+	
+	
+} 256 string filenameforall % for batch processing files
+
+%$index dfa
+
+		% render and convert the layout to KiCad
+	

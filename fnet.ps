@@ -1,0 +1,4970 @@
+%!PS
+cleardictstack % leaking dicts on debug error crashes
+
+% extract netlist from schematic
+
+% requires ghostscript min and max functions
+
+
+%project notes
+% update schematic parser to use pc version which is later revisionn
+% could split off s2n lightweight conversion
+
+% PCB text is centered, chack rotated symbols.
+
+
+/tfd (NetlistFFex.sch) def
+
+%-------------------------------------------------------------------------
+
+/KiCadDataFolderPfx (KiCad/myFiles/) def % change this to the full path where the 
+						% converted files will be stored.  Must be full path from
+						% top file directory, or files will be stored
+						% in the conversion source directory. Directory must exist.
+
+/verbose false def	% used for debug
+
+/render false def  % used for debug
+
+/writefiles true def  % writes the net file
+
+/writenets true def	% write an expressPCB netlist file.
+
+/enets false def	% attempt to create an expressPCB net.
+
+/writeProjectFile false def % attempt to create a full KiCad project
+
+/writeFootprints true def	% log the footprints
+
+/staticlib false def	% used for lib extraction
+
+/DisplayFont /URWGothicL-Book def
+
+%/DisplayFont /AvanteGarde-Book def
+
+% no user settings past this point
+
+%######################################################################
+
+
+/=$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile =} bind def
+
+/$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile } bind def
+
+%/dfa {pop} bind def  %
+/dfa {{ exch =string cvs print (: ) print ==} forall} bind def
+
+/makestring { 
+	%verbose 2 gt {(<) print =$} if
+	dup length string       % new string of right size
+	dup /NullEncode filter      % make a file out of string
+	2 index                 % array to stack top
+    { 2 copy write pop }         % integers to string
+	forall
+    flushfile exch pop                   % clean up
+} bind def
+
+/strcat {
+	dup length 2 index length add string
+	2 index length 3 -1 roll 3 copy putinterval pop pop 
+	0 3 -1 roll 3 copy putinterval pop pop 
+
+} bind def
+
+
+/Word_l$ <870000> def			% low first
+/Long_l$ <8500000000> def		% low first
+
+/Word$ <860000> def			% high first
+/Long$ <8400000000> def		% high first
+
+% level2 date function
+% example Tuesday, 11 February 2014 14:54:19
+(%Calendar%) /IODevice resourcestatus {
+	pop pop (%Calendar%) currentdevparams
+	dup /Running get { /timedict exch def
+		[ 
+     	timedict /Year get 4 string cvs {} forall 45
+     	timedict /Month get 2 string cvs {} forall 45
+     	timedict /Day get 2 string cvs {} forall 32
+     	timedict /Hour get 2 string cvs {} forall 58
+     	timedict /Minute get 100 add 3 string cvs 1 2 getinterval {} forall 58
+     	timedict /Second get 100 add 3 string cvs 1 2 getinterval {} forall
+     	]
+		makestring dup == /StartTime$ exch def
+		
+		[ 
+      	timedict /Day get 2 string cvs {} forall 
+    	
+    	[( jan ) ( feb ) ( mar ) ( apr ) ( may ) ( jun )
+    	 ( jul ) ( aug ) ( sep ) ( oct ) ( nov ) ( dec )
+    	]
+    	timedict /Month get 1 sub get {} forall 
+    	timedict /Year get 4 string cvs {} forall 
+     	]
+		makestring /SimpleDate exch def
+		
+		[
+		[(Sunday, ) (Monday, ) (Tuesday, ) (Wednesday, ) (Thursday, ) (Friday, ) (Saturday, )]
+		timedict /Weekday get get {} forall
+		timedict /Day get 2 string cvs {} forall 
+		
+		[( January ) ( February ) ( March ) ( April ) ( May ) ( June )
+    	 ( July ) ( August ) ( September ) ( October ) ( November ) ( December )
+    	]
+    	timedict /Month get 1 sub get {} forall 
+    	timedict /Year get 4 string cvs {} forall 32
+ 		
+    	timedict /Hour get 2 string cvs {} forall 58
+     	timedict /Minute get 100 add 3 string cvs 1 2 getinterval {} forall 58
+     	timedict /Second get 100 add 3 string cvs 1 2 getinterval {} forall
+		
+		]
+		makestring /NetDate$ exch def
+		
+		
+	}{
+     (Clock/calendar is present but not running.\n) print
+      /StartTime$ (0) def
+      /SimpleDate ( nodate ) def
+   } ifelse
+ } {
+   (No clock/calendar present.\n) print
+       /StartTime$ (0) def
+      /SimpleDate ( noclock ) def
+} ifelse
+
+
+/TimeHashes 10 dict def
+%quick and dirty proc for making a sort of timestamp
+/TimeStamp {
+
+(%Calendar%) currentdevparams begin
+10 dict begin  % make a local dictionary for constants
+/SEC_PER_HOUR 60 60 mul def
+/SEC_PER_DAY SEC_PER_HOUR 24 mul def 
+/SEC_IN_MONTH [0 2678400 5097600 7776000 10368000 13046400 15638400 18316800 20995200 23587200 26265600 28857600] def
+
+Year 1970 sub 365.2425 mul SEC_PER_DAY mul cvi % approximate the number of seconds since 0 time
+SEC_IN_MONTH Month 1 sub get cvi add  % add in the seconds to the first of the month
+Day 1 sub SEC_PER_DAY mul cvi add % seconds to midnight the prior day
+Hour SEC_PER_HOUR mul cvi add
+Minute 60 mul cvi add
+%	(->) print pstack (<-) =	
+Second add 
+%	(->) print pstack (<-) =	
+cvi dup 16 8 string cvrs exch
+
+end
+{
+	1 index cvn TimeHashes exch 2 copy known
+	{
+	%(y->) print pstack (<-) = flush
+		get 1 add 
+		cvi dup 16 8 string cvrs exch
+		4 -2 roll pop pop %put
+	
+	
+	%(y->) print pstack (<-) = flush
+	}{
+	%(n->) print pstack (<-) = flush
+		3 -1 roll put exit
+	%(n->) print pstack (<-) = flush
+	}ifelse
+} loop
+end
+} bind def
+
+
+% functions for decoding the input stream
+
+/keydict 10 dict def
+
+/initIO {
+	keydict begin
+	tf read	not {end exit} if	% read low byte 
+	tf read	not {end exit} if	% read high byte
+	8 bitshift or
+
+	/key exch def
+	/Object /keyDictType def
+	
+(\nkey: 0x) print key 16 =string cvrs = 
+	end
+} bind def
+
+/nextKeyNumber {
+	keydict begin
+
+	/paramInt key def
+	17 {
+		/j 0 def
+		paramInt 16#20 and 0 ne {/j 1 def}	if
+		paramInt 16#08 and 0 ne {/j j 1 add def}if	
+		paramInt 16#04 and 0 ne {/j j 1 add def}if	
+		paramInt 16#01 and 0 ne {/j j 1 add def}if
+		
+		/paramInt paramInt -1 bitshift def
+		
+		j 16#1 and 0 ne {/paramInt paramInt 32768 add def}if
+			
+	} repeat
+
+	/key paramInt def
+	end
+} bind def
+
+
+/read1 {
+	keydict begin
+
+	tf read	not {end exit} if	% read i
+	
+	nextKeyNumber
+
+	key xor 255 and
+	end	
+} bind def
+
+/read2 {
+	keydict begin
+
+	tf read	not {end exit} if	% read i
+	tf read	not {end exit} if	% read j
+	8 bitshift or			% j << 8			
+
+	nextKeyNumber
+
+	key xor 65535 and 
+	end
+} bind def
+
+/read3 {
+	keydict begin
+	
+	tf read	not {end exit} if	% read i
+	tf read	not {end exit} if	% read j
+	8 bitshift or			% j << 8			
+	tf read	not {end exit} if	% read k
+	16 bitshift or			% k << 16
+
+	/m exch def
+	
+	nextKeyNumber 
+
+	/n key 16 bitshift def
+	
+	nextKeyNumber
+
+	/n n key or def
+	
+	/m m n xor def
+
+	/m m 16777215 and def %0xFFFFFF
+
+	m 16#800000 and 0 ne {/m m -16777216 or def }if % 0xFF000000
+
+	m
+	
+	end	
+} bind def
+
+/dsysparm3 {
+        read3 verbose {dup dup 4 -1 roll  print 16 =string cvrs print (h ) print =string cvs print ( ) print 
+		[ exch dup -16 bitshift exch 16#FFFF and dup -8 bitshift exch 16#FF and ] makestring == }{pop pop} ifelse
+} bind def
+		
+/dsysparm2 {	
+		read2 verbose {dup dup 4 -1 roll print 16 =string cvrs print (h ) print =string cvs print ( ) print 
+		[ exch dup -8 bitshift exch 16#FF and ] makestring == }{pop pop} ifelse
+} bind def
+		
+/dsysparm1 {	
+		read1 verbose {dup dup 4 -1 roll print 16 =string cvrs print (h ) print =string cvs print ( ) print 
+		[ exch 16#FF and ] makestring == }{pop pop} ifelse
+} bind def
+
+
+
+% constant lookup tables
+
+/SCHFILE 16#5678 def
+/CMPFILE 16#5685 def
+/PCBFILE 16#B9C7 def
+/FPTFILE 16#7DF8 def
+
+
+/DIRECTION [0 0 90 180 270] def 
+
+/KI_DIRECTION [
+	( 1   0    0    1\n) % degenerate 0
+	( 1   0    0    1\n) % 0 rotate
+	( 0  -1    1    0\n) % -90 rotate 
+	(-1   0    0   -1\n) % -180 
+	( 0   1   -1    0\n) % -270
+	] def 
+
+/PS_DIRECTION [
+	[ 1   0    0    1  0 0] % degenerate 0
+	[ 1   0    0    1  0 0] % 0 rotate
+	[ 0   -1   1    0  0 0] % -90 rotate 
+	[-1   0    0   -1  0 0] % -180 
+	[ 0   1   -1    0  0 0] % -270
+	] def 
+
+			 %0    0    90    180   270
+/KORENTATION [(H ) (H ) (V )  (H )  (V )] def  % Kicad text orientation Horizontal|Vertical
+/KJUSTIFY    [(L T) dup (L T) (R B) (R B)] def % kicad text justify Left|Right Top|Bottom
+
+/K_TXT_DIRECTION << % >>
+	% coordinates are mirrored
+			%	  1    2     3	   4   
+	-180    {	
+			[(H ) (H ) (V )  (H )  (V )]  1 index get /lKTxtOrent exch def
+			[(L T) dup (L T) (R B) (R B)]  exch get /lKTxtJust exch def
+	}
+
+	dup 180 exch  % flip rotates sometimes have issues with the sign magnitude
+	
+	90   {	
+			[(V ) (V ) (H )  (H )  (V )]  1 index get /lKTxtOrent exch def
+			[(L T) dup (L T) (R B) (R B)]  exch get /lKTxtJust exch def
+	}
+	
+	dup -270 exch
+	
+	-90  { 
+			[(V ) (V ) (H )  (V )  (H )]  1 index get /lKTxtOrent exch def
+			[(R B) dup (L T) (R B) (L T)]  exch get /lKTxtJust exch def
+	}
+	
+	dup 270 exch 
+	
+	0 {	
+			[(H ) (H ) (V )  (H )  (V )]  1 index get /lKTxtOrent exch def
+			[(R B) dup (L T) (R B) (L T)]  exch get /lKTxtJust exch def
+	}
+	
+	dup -360 exch
+	
+	dup 360 exch
+	
+>> def
+
+/FONT [/notdef /PLAIN /BOLD] def
+
+/ARC [ 0 360 300 210 180 90 90 ] def
+
+/ARC_SHAPE [[0 3600] dup  [1200 600]  [1650 150]  [1801 3599] [2250 3150] [2700 0]] def
+
+/KSCH_ARC_DIRECTION [
+	[[0 3600] dup  [1200 600]  [1650 150]  [1801 3599] [2250 3150] [2700 0]  ] % 0
+	[[0 3600] dup  [2100 1500] [2550 1050] [2701 899]  [3150 450]  [0 900]   ] % 90
+	[[0 3600] dup  [3000 2400] [3450 1950] [1 1799] 	[450 1350]  [900 1800] ] % ]180
+	[[0 3600] dup  [300 3300]  [750 2850]  [901 2699]  [1350 2250] [1800 2700]] % 270
+] def
+%		360   0    300         210         180      90             90      
+/K_ARC_DIRECTION [
+	[[0 3600] dup  [3000 2400] [3450 1950] [1 1799]    [450 1350]  [900 1800] ] % ]180
+	[[0 3600] dup  [300 3300]  [750 2850]  [901 2699]  [1350 2250] [1800 2700]] % 270
+	[[0 3600] dup  [1200 600]  [1650 150]  [1801 3599] [2250 3150] [2700 0]  ] % 0
+	[[0 3600] dup  [2100 1500] [2550 1050] [2701 899]  [3150 450]  [0 900]   ] % 90
+] def
+
+
+/COMPONENT_TYPE [/notdef /titleBlockType /componentType /symbolType /footprintType /notdef] def
+
+/invalid %(/\\:*?"<>|) 
+<<47 95 92 95 58 95 42 95 63 95 34 95 60 95 62 95 124 95 >>
+def
+
+
+%*fields Properties
+%-Reference
+
+/quoteText {
+	tf read {
+	%dup ==
+		% find first quote
+		{
+			34 eq {exit}if
+			tf read not {exit} if
+		
+		} loop
+		[
+			{
+				tf read {
+					dup 34 eq {pop exit} if
+					invalid 1 index known {
+						pop % ignore invalid chars 
+					}if
+				}{ exit }ifelse
+			} loop
+		] makestring
+		
+		%(->) print pstack (<-) = flush
+	}{exit}ifelse
+	
+} bind def
+
+
+/isNumber << % >>
+	/48 0
+	/49	1
+	/50	2
+	/51	3
+	/52	4
+	/53	5
+	/54	6
+	/55	7
+	/56 8
+	/57 9
+>> def
+
+%16#DF  toupper mask
+
+
+
+/decomposeRef {
+
+	/instance 0 def
+	/isMultiGate false def 
+%	/libRefTxtSfx (_expressPCB) def
+	/origRefTxtCnt 0 def  % count of text bytes in reference name 
+	
+	/origRefTxt exch def % so we can get the prefix back
+	
+	% since we index the netlist by ref, this field can not be blank
+	origRefTxt length 0 eq {/origRefTxt (REF0) def}if
+
+	[ origRefTxt
+	dup length 1 sub -1 0 { 1 index exch get exch} for pop
+%	counttomark 0 gt {
+			
+		counttomark {
+		
+			isNumber 1 index =string cvs cvn 2 copy known{
+				pop pop exit  % is a number
+			}{
+				pop pop % not a number
+				origRefTxt origRefTxtCnt 3 -1 roll 16#DF and put
+				
+				/origRefTxtCnt origRefTxtCnt 1 add def
+			}ifelse
+		} repeat
+	
+		counttomark {
+		
+			isNumber 1 index =string cvs cvn 2 copy known {
+				get instance 10 mul add /instance exch def
+				pop
+			}{
+				pop pop 
+				counttomark 0 gt { 
+					% how to handle multiple gate components
+					16#DF and ] makestring /GateSfx exch def
+					/isMultiGate true def
+					mark
+				}if 
+				exit
+			}ifelse
+	
+		} repeat
+%	} if
+	pop 
+	%origRefTxtCnt 0 gt {
+	origRefTxt 0 origRefTxtCnt getinterval
+	/newRefTxt exch def
+%	 newRefTxt dup length libRefTxtSfx length add string dup
+%	3 -1 roll 0 exch putinterval dup origRefTxtCnt libRefTxtSfx putinterval 
+	[ newRefTxt {} forall ] makestring 
+	/libRefTxt exch def
+	
+	%}if 
+	
+} bind def
+%-Value
+%~when unknown
+%-Footprint
+%~when unknown
+%-Datasheet
+%~when unknown
+
+%#PWR for power pins -- handle symbols  separatly
+
+
+/getAttributes {
+
+	/paramInt exch def
+		
+		verbose  {
+		paramInt qdbp 
+		% split it out
+		dup 0 12 getinterval print ( ) print
+		dup 12 1 getinterval print ( ) print
+		%dup 13 1 getinterval print ( ) print
+		13 3 getinterval print (b) =
+		} if
+		%FDECBA987654 3 2 10
+		%0123456789AB C D EF
+		%ssssssssssss
+
+	/TextAttributes << % >>
+	
+		/attrib_vis paramInt 16#08 and 0 ne
+	
+		/attrib_dir paramInt 7 and
+	
+		/attrib_size paramInt -4 bitshift 
+	
+		/attrib_style 1 def		% fixed style
+		
+		/Object /attributesType 
+	
+	>> def
+	
+	verbose   {
+	TextAttributes begin
+	(TextAttributes: d:) print 
+	DIRECTION attrib_dir get =string cvs print
+	
+	( s:) print attrib_size =string cvs print
+	
+	( f:) print attrib_style =string cvs print
+	
+	( v:) print attrib_vis =string cvs =
+	
+	end
+	} if
+
+} bind def
+
+
+/createAddGroup {
+	% creates or adds to a sub group keeping track of the bounding box
+	/objectDict exch def
+	
+	/groupRef groupID =string cvs cvn def
+
+	
+	subComponents groupRef 2 copy known {
+			get % existing component directory			
+	}{
+			10 dict dup 4 1 roll put % creates a new group dictionary
+	} ifelse
+	begin	%open component dictionary
+			
+	% calculate the new bounding box just for pins
+	% this will be used to detect component rotation and orentation
+	objectDict /Object get /pinType eq {
+%	(is pin:) =
+		currentdict /pinCount known 
+		objectDict begin
+		{
+%		(has bbox) =
+			minX lbb1X min
+			minY lbb1Y min
+			
+			maxX lbb2X max
+			maxY lbb2Y max
+			
+			pinCount 1 add
+
+		}{
+			lbb1X 
+		    lbb1Y 
+			
+		    lbb2X 
+		    lbb2Y 
+		    
+		    1
+		    
+		} ifelse
+		end
+		
+		/pinCount exch def
+		
+%	(->) print pstack (<-) =	
+		/maxY exch def
+		/maxX exch def
+		
+		/minY exch def
+		/minX exch def
+	} if
+
+	ref objectDict def 
+		
+	end
+} bind def
+
+/updateCorners {
+		% on entry the trace dict is open 
+
+%Object ==
+
+		% resolve the part reference from the pad
+		% type -- we are looking for vias which are
+		% part of the net.  We can also create
+		% the part reference here
+
+		%corners begin 
+%12 setlinewidth
+		edges from  get begin 
+		% Add the name to the edge dictionary 							
+		/netRef newNetRef  def
+		
+%(corner /) print Object =string cvs print 
+%x1 y1 moveto
+		
+		Object /pinType eq { 
+		
+			groups parent get /Root 2 copy known {
+				get begin
+				refTxt
+				end
+				(.) strcat
+				pinNo 10 string cvs
+				strcat 
+			}{
+				pop pop 
+				(ungrouped.)
+				%ApertureText aperture 1 sub get
+				pinNo 10 string cvs
+				strcat
+				(.pin) strcat
+			}ifelse
+		}{
+			(link.0) 
+		}ifelse
+		dup /netPadtext exch def
+%netPadtext ==		
+		end	% from
+		/stRefTxt exch def % for debug may be used for reporting
+						   % the net list database
+		
+		% still in edges dict
+		edges to get begin 
+		% Add the name to the edge dictionary 							
+		/netRef newNetRef  def
+		
+		% resolve the part reference from the pad
+		% type -- we are looking for vias which are
+		% part of the net.  We can also create
+		% the part reference here
+%x1 y1 lineto stroke
+%( , ) print Object ==
+		
+		Object /pinType eq { 
+		
+			groups parent get /Root 2 copy known {
+				get begin
+				refTxt
+				end
+				(.) strcat
+				pinNo 10 string cvs
+				strcat 
+			}{
+				pop pop 
+				(ungrouped.)
+				%ApertureText aperture 1 sub get
+				pinNo 10 string cvs
+				strcat
+				(.pin) strcat
+			}ifelse
+		}{
+			(link.$) 
+		}ifelse
+		dup /netPadtext exch def
+		
+		end % to
+		/endRefTxt exch def % for debug may be used for reporting
+							% the net list database
+		%end % edges
+
+} bind def
+
+
+/newNetID {
+					
+(# add new ID: /)print newNetRef =string cvs print ( ) print thisRef == flush
+%(# dictstack count: ) print	countdictstack ==			
+	tempNets begin
+	10 dict begin 	% allocate a new net dictionary
+	
+	/Object /netType def
+	% store the linked list in the connections structure
+	/root thisRef def
+	/wireCount 1 def 
+	/netNumber net$Idx def  % index in mnet table of this net		
+	/net$Idx where {
+		begin
+		/net$Idx net$Idx 1 add def
+		end
+	} if
+%(new root: ) print root ==	
+												
+	% wires are connections with attributes for
+	% drawing or converting the individual trace	
+
+	connections root get begin
+	/netLink /0 def
+	updateCorners
+	
+	end		% connections
+
+	currentdict
+	end		% net dict
+	newNetRef exch def
+			
+	end % temp nets			
+
+} bind def
+
+/addNetItem
+
+	<< % >
+
+		0 {
+			% new item
+			pop % empty array
+
+			{
+				% dynamically create a new text name for this net 
+				(N$) net$Idx 25 string cvs strcat cvn /newNetRef exch def
+				
+				tempNets newNetRef known {
+					/net$Idx net$Idx 1 add def
+				}{
+					newNetID							
+					exit
+				}ifelse
+			}loop		
+		}
+
+		1 {
+			% add item
+
+			0 get /newNetRef exch def
+
+			tempNets newNetRef 2 copy known {
+(# Adding net: /) print  newNetRef =string cvs print ( ) print thisRef ==
+
+				% add new temp net to chain
+				get begin % existing net ref
+														
+				% local wires are open on stack
+				/wireCount wireCount 1 add def
+								
+			% search through net for end of start chain
+				/nextNetlink root def
+verbose {(/) print nextNetlink =string cvs print}if 
+				
+				{				
+					connections nextNetlink get begin	
+					netLink
+verbose {(-->/) print dup =string cvs print} if
+					currentdict
+					end
+					/linkDict exch def
+					/nextNetlink exch def
+					nextNetlink /0 eq{exit} if
+					
+				}loop
+verbose {() = flush}if
+			
+				linkDict begin
+				/netLink thisRef def
+				netLink
+				end
+
+				connections exch get begin
+				/netLink /0 def
+				/wire wireCount def
+				updateCorners												
+				end %connections			
+								
+%(-e-------------------) =
+%currentdict dfa
+%(--e------------------) =
+				end % existing net ref
+			}{
+				pop pop
+				newNetID
+			}ifelse
+				
+
+																
+%dddrawpage
+		}
+
+		2 { % merge items
+%(\n@ trace merge ->) print pstack (<-) =
+
+/oldVerbose verbose def
+/verbose false def	
+			10 dict begin  % push working directory for temp values
+			/Object /tempType def
+			/self /0 def
+
+			dup 0 get /sourceNetRef exch def
+			1 get /targetNetRef exch def
+
+(# Merging 2 temp nets: /) print
+sourceNetRef =string cvs print ( - ) print targetNetRef ==
+
+			sourceNetRef targetNetRef eq {
+(# calling add net: /) print sourceNetRef =string cvs print ( ) print thisRef ==
+%(->) print pstack (<-) = 
+%true {dddrawpage} if	
+				% add single item
+				[sourceNetRef]
+				addNetItem 1 get exec
+%true {dddrawpage} if	
+			}{
+			
+				% search for new net name
+
+connections  thisRef get /Object get /pinType eq {
+(# blank pin: ) print netName ==
+}if
+				
+				sourceNetRef 35 string cvs (N$) search {
+					pop pop pop
+					targetNetRef 35 string cvs (N$) search {
+						pop pop pop
+						/newNetRef sourceNetRef def
+					}{
+						pop 
+						/newNetRef targetNetRef def
+					}ifelse
+				}{
+					pop 
+					/newNetRef sourceNetRef def
+				}ifelse
+
+
+(# merged net name: ) print newNetRef == flush
+
+
+				tempNets sourceNetRef known not {
+verbose {(source not found: ) =	flush}if
+					newNetID
+%	tempNets sourceNetRef get dfa stop							
+				}if
+				
+				tempNets targetNetRef known not{
+verbose {(target not found: ) = flush}if
+					newNetID			
+%	tempNets targetNetRef get dfa stop							
+				}if
+
+				/sourceNet tempNets sourceNetRef get def 							
+				/targetNet tempNets targetNetRef get def
+				
+				/sourceNetNumber sourceNet /netNumber get def
+				
+				/sourceTraceRoot connections sourceNet /root get get def 							
+				/targetTraceRoot connections targetNet /root get get def
+				/thisTraceRef connections  thisRef get def	
+
+%false {dddrawpage} if			
+				% search through net for end of start chain
+				/nextNetlink sourceNet /root get def
+verbose {(/) print	nextNetlink =string cvs print flush}if
+				{				
+					connections nextNetlink get begin											
+					netLink self eq {	% prevent recursive loops on bad data
+						/netLink /0 def
+					}if
+					netLink
+verbose {(-->/) print dup =string cvs print flush} if
+					currentdict
+					end
+					/linkDict exch def
+					/nextNetlink exch def
+					nextNetlink /0 eq{exit} if					
+				} loop
+verbose {() = flush}if
+
+
+false {
+% debug draw the second part of the net
+verbose {(# debug second part of net) =} if
+
+/nextNetlink targetNet /root get def
+verbose {(/) print	nextNetlink =string cvs print} if 
+
+{				
+	connections nextNetlink get begin											
+	netLink self eq {	% prevent recursive loops on bad data
+		/netLink /0 def
+	}if
+	netLink
+verbose {(-->/) print dup =string cvs print}if 
+	%currentdict
+	end
+	%/linkDict exch def
+	/nextNetlink exch def
+	nextNetlink /0 eq{exit} if
+		
+}loop
+verbose {()= flush} if
+
+} if
+				% create all new nets
+				tempNets sourceNetRef undef					
+				tempNets targetNetRef undef					
+				
+				% we have the choice here to join the nets
+				% in a sort of order
+%(sorting nets) =
+%Object ==
+%self ==
+%count ==
+							
+				/u sourceNet /root get def  
+				/v targetNet /root get def
+				/w thisRef def
+	
+				/p linkDict /to get 10 string cvs cvi def 
+				/q targetTraceRoot /from get 10 string cvs cvi def 
+				/r thisTraceRef /from get 10 string cvs cvi def
+
+%[ u v w ] ==
+%[ p q r ] ==
+							
+				q p lt 
+				{
+					/t1 p def
+					/t2 u def
+					r q lt { %if r < q { p = r; r = t; }
+						/p r def
+						/r t1 def
+						/u w def
+						/w t2 def
+					}
+					%else
+					{
+						r t1 lt {%if r < t { p = q; q = r; r = t; }
+							/p q def
+							/q r def
+							/r t1 def
+							/u v def
+							/v w def
+							/w t2 def
+						}
+						%else
+						{ % { p = q; q = t; }
+							/p q def
+							/q t1 def
+							/u v def
+							/v t2 def
+						}ifelse
+					}ifelse
+				}
+				%else
+				{
+					r q lt %if r < q
+					{
+						%t = r; r = q;
+						/t1 r def
+						/r q def
+						/t2 w def
+						/w v def
+						t1 p lt { %if t < p { q = p; p = t; }
+							/q p def
+							/p t1 def
+							/v u def
+							/u t2 def
+						}
+						% else     { q = t; }
+						{
+							/q t1 def
+							/v t2 def
+						}ifelse
+					}if
+				}ifelse
+%Object ==
+%self ==
+
+%[ u v w ] ==
+%[ p q r ] ==
+
+				% assemble the net in semi sort order
+				/nextNetlink connections u get /self get def
+
+verbose {(# assembling nets in new sort order: ) =} if
+verbose {(/) print	nextNetlink =string cvs print}if 
+				{				
+					connections nextNetlink get begin											
+					currentdict /netLink known not {
+						/netLink /0 def
+					}if
+					netLink self eq {	% prevent recursive loops on bad data
+						/netLink /0 def
+					}if
+					netLink
+verbose {(-->/) print dup =string cvs print}if
+					currentdict
+					end
+					/linkDict exch def
+					/nextNetlink exch def
+					nextNetlink /0 eq{exit} if
+					
+				} loop
+verbose {()= flush}if
+				linkDict begin
+				/netLink v def
+				end
+
+				/nextNetlink connections v get /self get def
+verbose {(/) print	nextNetlink =string cvs print}if
+
+				{				
+					connections nextNetlink get begin											
+					currentdict /netLink known not {
+						/netLink /0 def
+					}if
+					netLink self eq {	% prevent recursive loops on bad data
+						/netLink /0 def
+					}if
+					netLink
+
+verbose {(-->/) print dup =string cvs print}if 
+					currentdict
+					end
+					/linkDict exch def
+					/nextNetlink exch def
+					nextNetlink /0 eq{exit} if
+					
+				} loop
+				
+				
+verbose {()= flush}if		
+				linkDict begin
+				/netLink w def
+				end
+
+				/nextNetlink connections w get /self get def
+verbose {(/) print	nextNetlink =string cvs print}if 
+				{				
+					connections nextNetlink get begin											
+					currentdict /netLink known not {
+						/netLink /0 def
+					}if
+					netLink self eq {	% prevent recursive loops on bad data
+						/netLink /0 def
+					}if
+					netLink
+
+verbose {(-->/) print dup =string cvs print}if 
+					currentdict
+					end
+					/linkDict exch def
+					/nextNetlink exch def
+					nextNetlink /0 eq{exit} if
+				} loop
+verbose {()= flush}if
+
+				% update the new net for all links
+				/nextNetlink u def
+verbose {(/) print	nextNetlink =string cvs print}if
+				/linkCount 0 def
+				{				
+					connections nextNetlink get begin											
+					netLink self eq {	% prevent recursive loops on bad data
+						/netLink /0 def
+					}if
+					netLink
+verbose {(-->/) print dup =string cvs print} if
+						updateCorners
+						currentdict
+					end
+					/linkDict exch def
+					/nextNetlink exch def
+					nextNetlink /0 eq{exit} if
+					/linkCount linkCount 1 add def
+				} loop
+verbose {() = flush}if
+
+
+				% re create the new souce net
+				10 dict begin
+								
+				/Object /netType def
+				% store the linked list in the connections structure
+				/root u def
+				/wireCount linkCount def 
+				/netNumber sourceNetNumber def  % index in net table of this net		
+				
+				currentdict
+				end
+				tempNets newNetRef 3 -1 roll put 
+			
+
+			}	ifelse							
+			end %working dict
+/verbose oldVerbose def				
+		}
+
+	>>  def
+	
+/createNets {
+(# dictstack count: ) print	countdictstack ==			
+	
+
+% find junctions
+	connections {
+		dup type /dicttype eq {
+			begin
+			pop
+			% keep track of the number of connections to a given
+			% wire point.  These are net junctions if more than 3
+			edges from  get begin	% get the first component loc
+
+			Object /edgeType eq {
+				/pointRef 
+				x1 cvi 10 string cvs
+				(_) strcat 
+				y1 cvi 10 string cvs 
+				strcat cvn def
+	
+				junctions pointRef 2 copy known {
+					2 copy get 1 add
+					
+				}{
+					1
+				}ifelse
+				put
+			}if
+			end
+			
+			edges to  get begin	% get the first component loc
+			Object /edgeType eq {	
+				/pointRef 
+				x1 cvi 10 string cvs
+				(_) strcat 
+				y1 cvi 10 string cvs 
+				strcat cvn def
+	
+				junctions pointRef 2 copy known {
+					2 copy get 1 add
+					
+				}{
+					1
+				}ifelse
+				put
+			}if
+			end
+
+			
+			end
+		}{
+			pop pop
+		}ifelse
+	} forall
+(# dictstack count: ) print	countdictstack ==			
+		
+	/net$Idx 1 def
+	connections {
+%(on trace ->) print pstack (<-) =
+
+		dup type /dicttype eq {
+			
+			begin	% open the current trace dictionary to get net name info
+			
+%(\nOn entry: ->) print pstack (<-) =
+%(Object :) print Object == 
+%from == %/netName get =string cvs print ( . ) print
+%to  == %/netName get =string cvs print ( : ) print
+			
+			% search the edge to see if there are existing nets
+							
+			[
+
+			edges from  get begin	% get the first component loc
+			%x1 =string cvs print ( ) print y1 ==
+			currentdict /netRef known 
+			end {
+				 edges from  get /netRef get  
+				%(\n1) print edges from get dfa
+			}if
+			
+			edges to get begin	% get the first component loc
+			%x1 =string cvs print ( ) print y1 ==
+
+			currentdict /netRef known 
+			end
+			{
+				 edges to  get /netRef get  
+				%(\n2) print edges to get dfa
+			}if
+			
+			]
+			end % the trace instance dict
+
+			10 dict begin  % local working dict
+			/Object /scratchType def
+			/parent /0 def
+			
+			% at this point the stack contains the references to the existing nets
+			% as an array to scan through 
+			
+			exch /thisRef exch def
+			 
+			addNetItem 1 index length  get exec 
+
+			end %temp dict
+
+		}{
+%(on trace id ->) print pstack (<-) =
+			pop pop  % not a dictionary
+		}ifelse 
+
+	} forall
+(# dictstack count: ) print	countdictstack ==			
+	
+%dddrawpage
+			
+		% build an EPCB formatted netlist from this info
+		% -- to be completly useful this netlist would need to
+		% 	 be merged with the schematic netlist
+		
+		% this is produced for comparison  this code is better
+		% served in the schematic program
+
+writenets {
+	NewProjectPfx (_k.net) strcat writenets { (w) file /netfileref exch def}{pop}ifelse
+} if
+		
+		/netNames 10 dict def  % from EQUIPOT
+	
+		netNames begin
+		/netTableLength tempNets length 1 add def 
+		end 
+
+		/partIDs 10 dict def  % 
+	
+		partIDs begin
+		/Object /typePartID def
+		/partIDsTableLength 0 def 
+		end 
+
+		(# EESchema Netlist Version 1.1 created  ) 
+		NetDate$ strcat (\n\050\n) strcat print_netfile
+		
+
+enets {
+		% create a table based on net number that will
+		% contain the part pin number info
+		("ExpressPCB Netlist") =
+		("KiCad ---") =
+		(1) =
+		(0) =
+		(0) =
+		("") = 
+		("") = 
+		("") = 
+}if
+		/netTable netNames /netTableLength get array def
+
+		0 1 netTable length 1 sub {
+			netTable exch 10 dict
+			begin
+				/thisLink 1 def
+			currentdict 
+			end		
+			put
+		} for
+		
+		10 dict begin 
+			/idx 1 def
+			tempNets {
+				pop dup 
+				 idx def
+				35 string cvs
+				netTable idx get begin
+				/name exch def
+				end
+				/idx idx 1 add def 
+			} forall
+		currentdict end
+		/netTableMap exch def
+		
+%(# dictstack count: ) print	countdictstack ==			
+		
+	enets {(\n"Part IDs Table") =}if
+	workingDict begin
+	/idx 1 def
+	end 
+	
+		groups {
+			exch 
+pop %(\n# scanning module for nets: ) print ==
+			
+			dup type /dicttype eq {
+				
+				/this_module exch def
+				
+				this_module /Root 2 copy known {
+%(# module has root) =
+					get begin
+					Object /componentType eq 
+					{
+						(") refTxt strcat (" ") strcat 
+						valueTxt strcat (" "") strcat
+
+% attempt at back annotating net
+true {
+						/Ar TimeStamp def
+						
+						% need to correlate timestamp with /AR in cmp file
+						( \050 /) Ar strcat ( $noname  ) strcat 
+						refTxt length 0 gt {
+							refTxt
+						}{
+							%currentdict dfa stop
+							newRefTxt
+						}ifelse
+						strcat
+						( ) strcat 
+						valueTxt length 0 gt {
+							valueTxt
+						}{
+							(~)
+						}ifelse  strcat ( {Lib=) strcat
+%currentdict dfa stop
+						libRef 75 string cvs strcat (_expressPCB}\n) strcat print_netfile 
+}if
+
+						
+%currentdict dfa stop
+						refTxt length 0 gt {
+							refTxt
+						}{
+							%currentdict dfa stop
+							newRefTxt
+						}ifelse
+						
+						valueTxt length 0 gt {
+							valueTxt
+						}{
+							(~)
+						}ifelse
+						
+						Ar
+						
+						partIDs begin
+						/partIDsTableLength partIDsTableLength 1 add def
+						
+						10 dict begin
+						/Ar exch def
+						/value exch def
+						/ref exch def		% reference for plotting KiCad nets
+						/line exch def
+						currentdict 
+						end	% new dict
+						partIDsTableLength exch def  % Part id table length is a counter
+						partIDsTableLength
+						end % part IDs
+					
+						firstLink 15 string cvs cvn
+						end % root for module
+						/startLink exch def
+						/partID exch def
+enets {				
+workingDict begin
+idx =string cvs print (: ) print
+/idx idx 1 add def
+end
+partIDs partID get /line get = flush
+}if					
+					
+						/listLink startLink def 
+					
+						{
+					
+							this_module listLink 2 copy known 
+							{
+								get begin
+						
+								Object /pinType eq 
+								{
+%(%Pad info:) =
+%currentdict dfa
+					
+%(   %Pad ) print
+
+									currentdict /netRef known {
+										netTableMap netRef get
+									}{
+										0
+									}ifelse
+									/localNetRef exch def
+	
+									netTable  localNetRef  get begin
+									thisLink 
+									[
+										localNetRef
+							
+										partID 
+							
+										pinNo
+							
+										/thisLink thisLink 1 add def
+% thisLink 
+									]
+									def
+% back annotate net attempt
+true {
+(  \050    ) pinNo 15 string cvs strcat ( )strcat
+currentdict /name known { 
+name 35 string cvs
+}{
+(?) 
+%currentdict end currentdict dfa stop
+} ifelse strcat ( \051\n) strcat print_netfile
+}if
+							
+									end % netTable localNetRef
+							
+								% add connection to net table
+							
+								} if 
+					
+								next % module link
+								end
+							
+								/listLink exch def
+								listLink /0 eq{exit} if
+							}{
+								pop pop
+								(# broken or not defined link: ) print listLink ==
+								exit
+							}ifelse
+						} loop
+						( \051\n) print_netfile
+				
+					}{
+%(# not a footprint: ) print Object ==
+						end
+					}ifelse
+					
+				}{
+					pop pop
+%(# module does not have a root) =
+%				pop {
+%					dup type /dicttype eq { 
+%						exch (\n ref: ) print ==
+%						/Object 2 copy known {
+%							get ==
+%						}{
+%							(**) =
+%							pop pop
+%						}ifelse
+%						
+%					}{
+%						exch == ==
+%					}ifelse
+%				} forall
+				}ifelse
+	
+			}{pop}ifelse  % dict type
+			
+		}forall
+		(\051\n*\n\173 Pin List by Nets\n) print_netfile 
+		1 1 netTable length 1 sub {
+			/idx exch def
+			%idx =string cvs print (: ) print 
+			netTable idx get 
+			begin
+			(Net ) idx 10 string cvs strcat 
+			( ") strcat name strcat (" ") strcat name strcat ("\n) strcat print_netfile
+			1 1 thisLink 1 sub {
+				load cvx exec exch
+				
+				partIDs exch get /ref get ( ) exch strcat exch 
+				10 string cvs ( ) exch  strcat strcat (\n) strcat print_netfile
+				pop
+
+			}for
+		
+			end
+		}for
+		(\175\n#End\n) print_netfile
+
+writenets {netfileref closefile} if		
+		
+%partIDs dfa
+% open stuff file
+writenets { 
+	NewProjectPfx (.stf) strcat  /stufffilename exch def
+	mark
+	stufffilename status {
+		cleartomark
+		stufffilename (r) file /tf exch def
+		
+		mark
+		/stuffdict 10 dict def stuffdict begin
+		{
+			quoteText cvn
+			quoteText def
+		} loop
+		cleartomark
+		
+		end
+		tf closefile
+		%stuffdict dfa
+
+writenets {
+	NewProjectPfx (_k.cmp) strcat writenets { (w) file /cmpfileref exch def}{pop}ifelse
+} if
+stufffilename ==
+%stuffdict dfa stop
+		
+		(Cmp-Mod V01 Created by fnet.ps date = )
+		NetDate$ strcat (\n) strcat print_cmpfile
+		
+		
+		1 1 partIDs /partIDsTableLength get  {
+			partIDs exch get begin
+		
+			(\nBeginCmp\nTimeStamp = /) Ar strcat 
+			(;\nReference = ) strcat ref strcat
+			(;\nValeurCmp = ) strcat value strcat  
+			(;\nIdModule  = ) strcat 
+			stuffdict ref cvn 2 copy known {
+				get  
+			}{
+				pop pop (~) 
+			}ifelse
+			strcat (;\nEndCmp\n) strcat print_cmpfile
+			end
+		} for
+		
+		(\nEndListe\n\n) print_cmpfile
+		
+writenets {cmpfileref closefile} if		
+
+		
+	}{pop}ifelse
+	
+}if
+
+
+
+
+
+%stop		
+enets {
+		/nct 10 dict def
+
+		workingDict /linkLine 1 put
+		1 1 netTable length 1 sub {
+			/idx exch def
+			%idx =string cvs print (: ) print 
+			netTable idx get 
+			begin
+			/innerlink workingDict /linkLine get def
+ 
+			1 1 thisLink 2 sub {
+				workingDict begin
+				/idy exch def
+				nct linkLine <0D0A> %=string cvs print (: ) print 
+				idy load { 15 string cvs strcat ( ) strcat }forall
+				/linkLine linkLine 1 add def
+				linkLine 15 string cvs strcat  put
+				end
+			} for
+			thisLink 1 sub dup 0 gt  {
+				workingDict begin 
+				/idy exch def
+				nct linkLine <0D0A>  %=string cvs print (: ) print 
+				idy load { 15 string cvs strcat ( ) strcat }forall
+				/linkLine linkLine 1 add def
+				(0) strcat put
+				end
+			}{
+				pop
+				/innerlink 0 def
+				% net does not have any pins or parts
+				% these are in effect drawings not traces
+%(->) print pstack (<-) =
+				(*) =
+			}ifelse
+			end % net table
+		} for
+		%pop	% link counter
+
+		(\n"Net Names Table") =
+		1 1 netTable length 1 sub {
+			netTable exch get
+			begin 
+			(") print name print (" ) print innerlink ==
+			end
+		} for
+
+		(\r\n"Net Connections Table") print
+		1 1 nct length 1 sub {
+			nct exch get print
+		}for
+		<0D0A> print %stop
+} if
+
+		% draw nets
+		
+		% connections -- list of objects in edges to connect
+		
+		% edges -- cloud of connected points
+
+	(closing flushflag: ) print flushFlag ==
+
+	%	/flushFlag false def  % only render on exit
+	
+		%symbols {} forall		
+		(leakydicts: ) print countdictstack ==				
+		end % currentsheet 
+		(leakydicts: ) print countdictstack ==				
+tfn ==
+showpage
+	
+} bind def
+
+
+
+% component parse case dictionaries
+
+/parse_components << % >>
+
+	1	{ 
+/oldVerbose verbose def
+/verbose false def
+		verbose  { (\ncomponent info) = 
+			(next:	) print  localLink ==
+			(parent: ) print localGroup ==
+			(self: ) print	localRef ==	
+			(parent Object: ) print Object ==
+			(leaks: ) print count ==
+			(dictdepth: ) print countdictstack ==
+		}if
+		% this is the grouped component record
+		
+		read1	% m  /compType 0 nil 1 sheet 2 component 3 symbol
+		COMPONENT_TYPE exch get
+        
+        read3 =string cvs cvn	% verbose  {(might be link to first item: ) print ==}{pop}ifelse
+        
+        read1	% n (strlen)
+  		dup string /localStringBuffer3 exch def
+
+		0 1 3 -1 roll 1 sub {
+			localStringBuffer3 exch read1 put
+
+		} for 
+		% name (string)
+		localStringBuffer3    
+		verbose {(Name: ) print localStringBuffer3 =}if
+
+        read2	% i4 /nameInfo exch def
+        verbose  {
+			dup qdbp 
+			% split it out
+			dup 0 12 getinterval print ( ) print
+			dup 12 1 getinterval print ( ) print
+			dup 13 1 getinterval print ( ) print
+			14 2 getinterval print (b TextAttributes) =
+		} if
+		%FDECBA987654 3 2 10
+		%0123456789AB C D EF
+		%ssssssssssss
+        
+        
+        
+        read3	% i6 /nameX exch def		
+        read3	% i8 /nameY exch def
+        
+        read1	% i9 (strlen)
+  		dup string /localStringBuffer5 exch def
+
+		0 1 3 -1 roll 1 sub {
+			localStringBuffer5 exch read1 put
+
+		} for 
+		%id (string)
+		localStringBuffer5 % this needs to be separated out in letter  number format
+		verbose {(ID: ) print localStringBuffer5 =}if
+		
+        read2	%	i11 /idInfo exch def
+        verbose  {
+			dup qdbp 
+			% split it out
+			dup 0 12 getinterval print ( ) print
+			dup 12 1 getinterval print ( ) print
+			dup 13 1 getinterval print ( ) print
+			14 2 getinterval print (b TextAttributes) =
+		} if
+
+		read3	%	i12 /idX exch def
+        read3	%	i13 /idY exch def
+                
+        read1		%	i14 (strlen)
+  		dup string /localStringBuffer6 exch def
+
+		0 1 3 -1 roll 1 sub {
+			localStringBuffer6 exch read1 put
+
+		} for 
+
+%		(order info: ) print 
+		localStringBuffer6
+
+		read2	verbose  {(skipped parameter: ) print ==}{pop}ifelse
+		
+				
+		/localObject 10 dict def
+		
+		
+		localObject begin
+
+			/orderTxt exch def
+			/y1 exch def
+			/x1 exch def
+			/refInfo exch def
+			/refTxt exch def
+			/y2 exch def
+			/x2 exch def
+			/valueInfo exch def
+			/valueTxt exch def
+			/firstLink exch def
+			/Object exch def
+
+			/next	localLink def
+			/parent localGroup def
+			/self	localRef def	
+
+		end
+		
+		
+		% attach drawing commands for library match and render
+		subComponents localRef 2 copy known {
+			get
+			 
+			localObject /drawList 3 -1 roll put
+			 
+		}{
+		
+			% there is no drawing commands for this object
+			% create an empty dict in case commands are out of order
+			10 dict dup 4 1 roll put localObject /drawList 3 -1 roll put
+			
+			(Warning component is a singularity.) = flush
+		
+		}ifelse
+		
+				
+		%make a working copy locally
+		/xObject localObject /Object get def
+		
+		xObject /componentType eq {
+		localObject begin
+			% build a unique component name for the Kicad library cache
+			
+%			(libraryQ: ) =
+%			refTxt ==
+			refTxt decomposeRef 
+%			instance  ==
+%			libRefTxt ==
+%			origRefTxt ==
+%			newRefTxt ==
+			
+			% create the Netlist "Part ID Table" index
+			
+			{
+				components origRefTxt cvn 2 copy known {
+				% might be a duplicate reference in an incomplete schematic
+				pop pop
+				% automatically increment instance until there is a place
+				% in the components array for this item
+				/instance instance 1 add def
+				/origRefTxt newRefTxt instance 25 string cvs strcat def
+			
+				}{
+			 		localObject put exit
+				}ifelse
+			} loop 
+
+
+			% Resistors and capacitors have special cases due to
+			% the value and the part instances not being unique
+		
+			% plugs headers and jacks and connectors also need to be special cased since
+			% headers and connectors are specific things
+
+			<< % >
+				/C {
+					% can check for diff between cap an cap polarized
+					/libRef libRefTxt cvn def
+					
+					drawList {
+						exch pop
+						dup type /dicttype eq {
+							/Object get /arcType eq {
+							% if the draw list contains an arc the symbol is CP
+								/libRef /CP def
+								exit
+							}if 
+						}{pop}ifelse
+
+					} forall 
+					
+				}
+
+				/CP {
+					% can check for diff between cap an cap polarized
+					/libRef libRefTxt cvn def
+					% if the draw list contains an arc the symbol is CP
+
+				}
+			
+				/R {
+					/libRef libRefTxt cvn def
+					
+					
+					% rv will have 3 pins
+					drawList /pinCount get 3 eq {
+						/libRef /POT def
+					}if
+					
+					% rp will have more than 3 pins
+					drawList /pinCount get 3 gt {
+						/libRef /RP def
+					}if
+					
+				}
+
+				/RV {
+					
+					
+					/libRef /POT  def
+					
+					% rv will have 3 pins
+					
+					% rp will have more than 3 pins
+					
+				}
+
+				/VR {
+					% use a consistant library name
+					/libRef /POT  def
+					
+					% rv will have 3 pins
+					drawList /pinCount get 3 lt {
+						/libRef /VXR def
+					}if
+				
+					% rp will have more than 3 pins
+					
+				}
+
+				
+				/J {
+					% count the pins to create the library reference ID
+					%(is connector: ) print %drawList dfa
+					valueTxt length 0 eq {
+				
+						drawList /pinCount known {
+							drawList begin
+							
+							maxX minX sub 0 ne
+							maxY minY sub 0 ne and 
+							{
+								% when the bbox has value in both directions then
+								% divide box by 2 if even to form ID
+								pinCount dup 2 mod 0 eq exch 2 ne and {
+									(PINHEAD-2X) pinCount 2 div =string cvs strcat cvn 
+								}{
+									(CON-) pinCount =string cvs strcat cvn 
+								}ifelse
+								
+							}{
+								(PINHEAD-) pinCount =string cvs strcat cvn 
+							}ifelse	
+							end
+						}{
+							% linked list not yet defined, which is rare
+							% since we need a unique value for this
+							% object we must hash one
+							(Connector) TimeStamp strcat cvn
+						}ifelse
+						
+					}{
+						[ valueTxt {} forall ] makestring % make a copy of the string on the stack
+				
+						 0 1 2 index length 1 sub
+						{1 index exch 2 copy get dup 32 eq {pop 95} if put } for cvn				
+					}ifelse
+					/libRef exch def
+				
+				}
+				
+				
+				dup /P exch % P and J are interchagable
+	
+				/Y {
+					
+					/libRef libRefTxt cvn def
+				
+				}
+
+				%/X {
+					
+				%	/libRef /Y cvn def
+				
+				%}
+
+
+				/L {
+					
+					/libRef libRefTxt cvn def
+				
+				}
+
+				/T { % transformer
+					
+					/libRef libRefTxt cvn def
+					
+					% could be large or small
+				
+				}
+
+
+				/LED {
+					
+					/libRef libRefTxt cvn def
+				
+				}
+
+				/F { % fuse
+					/libRef libRefTxt cvn def					
+				}
+
+				/FB { % ferrite bead
+					/libRef libRefTxt cvn def					
+				}
+	
+
+				/B { % battery
+					/libRef libRefTxt cvn def					
+				}
+
+				/BT { % battery terminal
+					/libRef libRefTxt cvn def					
+				}
+
+	
+				/SW {
+					% count the pins
+					/libRef libRefTxt cvn def
+				
+				}
+				
+				
+				% diodes are a special case as they can be LED or zener
+				% or a bridge
+				/D {
+					valueTxt (LED) search {
+						pop pop pop
+						/libRef /LED def
+					}{
+						[ exch {16#5F and}forall] makestring
+						(ZENER) search {
+							pop pop pop
+							/libRef /ZENER def
+						}{					
+							(BRIDGE) search {
+								pop pop pop
+								/libRef /BRIDGE def
+								% still need to check for large or small bridge
+							}{
+								pop
+								/libRef /DIODE def
+							} ifelse
+						}ifelse
+					}ifelse
+				}
+				
+
+				
+			>> newRefTxt 2 copy known {
+				% libray index is based on the reference or pin count
+				get exec (library: ) print libRef ==
+			}{
+				pop pop
+				%value is library index
+				/libRef
+					[ valueTxt {} forall ] makestring % make a copy of the string on the stack
+				
+					 0 1 2 index length 1 sub
+					{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+					
+				cvn def
+							
+			}ifelse
+
+
+			libRef length 0 eq {
+				newRefTxt 0 eq {
+					valueTxt 0 eq {
+						orderTxt 0 eq {
+							drawList /pinCount 2 copy known {
+								get =string cvs (Device_) exch strcat
+								(_Pin) strcat cvn
+							}{
+								pop pop /libRef /Unresolved_Ref def
+							}ifelse
+						}{
+							/libRef [ orderTxt {} forall ] makestring % make a copy of the string on the stack
+					
+							 0 1 2 index length 1 sub
+							{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+						
+							cvn def
+						}ifelse						
+					}{
+						/libRef [ valueTxt {} forall ] makestring % make a copy of the string on the stack
+				
+						 0 1 2 index length 1 sub
+						{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+					
+						cvn def
+					}ifelse
+						
+				}{
+					/libRef newRefTxt cvn def
+				}ifelse
+				
+				(resolved ref: ) print libRef ==
+				
+			}if
+
+
+			library libRef 2 copy known {
+				get
+			}{
+%(->) print pstack (<-) = flush
+				10 dict dup 4 1 roll put
+			}ifelse
+			localRef localObject put
+
+			 
+
+		end
+		verbose {(\nref:) = localObject dfa} if 
+
+
+		}if
+	
+		
+		xObject /symbolType eq {
+		localObject begin
+			
+			/symRef
+			[ valueTxt {} forall ] makestring % make a copy of the string on the stack
+		
+			 0 1 2 index length 1 sub
+			{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+			
+			cvn def
+
+			nets symRef 2 copy known {
+				get
+			}{
+%(->) print pstack (<-) = flush
+				10 dict dup 4 1 roll put
+			}ifelse
+			localRef localObject put
+
+
+			symbols localRef localObject put
+		
+		end	
+verbose  {(\nsym: ) = localObject dfa} if 
+
+			
+		}if
+		
+		xObject /titleBlockType eq {
+		
+			currentSheet /title_block 2 copy known {
+				get /position localObject put
+			}{
+				
+				10 dict dup /position localObject put put
+			
+			}ifelse
+		
+		} if
+			
+		currentSheet localRef localObject put  % for searching net names	
+		groups localRef get
+		begin /Root localObject def end 
+
+
+		
+/verbose oldVerbose def
+	}
+
+	2 {
+	verbose { (not defined) =} if
+	}
+
+	3	{
+/oldVerbose verbose def
+/verbose false def
+	verbose { (local pin) = } if
+		
+			read1  
+			verbose {(global direction: ) print DIRECTION 1 index -5 bitshift 7 and get ==}if
+						
+			verbose  { %(skipped parameter: ) print ==
+			
+				dup	qdbp
+				% split it out
+				dup 0 7 getinterval print ( ) print
+				dup 8 3 getinterval print ( ) print
+				11 5 getinterval print (b flags) =
+			}if % nominally 33
+				
+			read3	% m (pinX: ) print ==
+			read3	% n (pinY: ) print ==
+			
+			read1	% i2
+			dup string /localStringBuffer4 exch def
+	
+			0 1 3 -1 roll 1 sub {
+				localStringBuffer4 exch read1 put
+	
+			} for 
+	
+	%		(pinNameText: ) print 
+			localStringBuffer4
+					
+			read2	% 	i6	getAttributes
+			verbose {(name direction: ) print DIRECTION 1 index 7 and get == } if
+
+			verbose  {
+				dup qdbp 
+				% split it out
+				dup 0 12 getinterval print ( ) print
+				dup 12 1 getinterval print ( ) print
+				%dup 13 1 getinterval print ( ) print
+				13 3 getinterval print (b pin name) =
+			} if
+			
+			
+			read3	% 	i8	(textX: ) print ==
+			read3	% 	i9	(textY: ) print ==
+	
+			read2	
+			verbose  {
+			dup % 	i10	
+			(\n#\n#pinNo: ) print ==
+			(#\n) print
+	  		} if
+	  		
+			read2	%	i11	getAttributes
+			verbose {(number direction: ) print DIRECTION 1 index 7 and get == } if
+
+	
+			verbose  {
+				dup qdbp 
+				% split it out
+				dup 0 12 getinterval print ( ) print
+				dup 12 1 getinterval print ( ) print
+				%dup 13 1 getinterval print ( ) print
+				13 3 getinterval print (b pin number) =
+			} if
+
+			
+			read3	%	i12 (textX: ) print ==
+			read3	%	i13 (textY: ) print ==
+	
+			read1	% i14
+			dup string /netText exch def
+	
+			0 1 3 -1 roll 1 sub {
+				netText exch read1 put
+	
+			} for 
+			
+			[ netText {} forall ] makestring % make a copy of the string on the stack
+		
+			 0 1 2 index length 1 sub
+			{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+			
+	
+	%		(skipped block: <) print SkipBlock $ print ( ) print SkipBlock ==
+		   
+			read2 verbose  {(skipped parameter: ) print ==}{pop}ifelse
+	
+			/localPin 10 dict def
+			
+			localPin begin
+			
+			%dup (true netname: ) print == 
+			/netName exch def		% this may be netname
+			netName length 0 gt {
+				/netRef netName cvn def
+			}if
+			
+			/pinNoY exch def		% pin number text location
+			/pinNoX exch def
+			
+			/pinNoAttrib exch def	% pin number attributes
+			
+			/pinNo exch def			% the actual pin number
+			
+			/pinNameY exch def		% pin name text location
+			/pinNameX exch def	
+			
+			/pinNameAttrib exch def
+			
+			%dup (actual pin name: ) print == 
+			/pinName exch def 
+			
+			/y1 exch def
+			/x1 exch def
+			
+			/pinFlags exch def
+			
+			/Object /pinType def	% set render key
+			
+			/next	localLink def
+			/parent localGroup def
+			/self	localRef def	
+
+			
+			/lbb1X x1 def				% used to calculate bbox of grouped object
+			/lbb1Y y1 def
+	
+			/lbb2X x1 def
+			/lbb2Y y1 def
+	
+			
+			end 
+			
+	%       this.edges.put(new Integer(i), new Point(m, n));
+			/ref objectID =string cvs cvn def
+			edges ref localPin put
+	
+			currentSheet ref localPin put
+	
+			localPin createAddGroup	
+			
+verbose {
+localPoint dfa
+(--------) =
+} if
+/verbose oldVerbose def
+		}
+	
+	4	{
+/oldVerbose verbose def
+/verbose false def
+	verbose { (edges point) = } if
+			read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+			
+			read3	%	m
+			read3	%	n
+			
+%	        localPoint = new Point(m, n);
+			/localPoint 10 dict def
+			localPoint begin
+			/y1 exch def
+			/x1 exch def
+			
+			/Object /edgeType def
+
+			/next	localLink def
+			/parent localGroup def
+			/self	localRef def	
+
+
+
+			end
+		
+%	        this.edges.put(new Integer(i), localPoint);
+			edges objectID =string cvs cvn localPoint put
+		
+
+verbose {
+localPoint dfa
+(--------) =
+} if
+/verbose oldVerbose def
+		}
+	
+	5	{ 
+/oldVerbose verbose def
+/verbose false def
+verbose { (connections point) = } if
+			
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+			
+			read3	%	m
+			read3	%	n
+			
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+			
+	%        localPoint = new Point(m, n);
+			/localPoint 10 dict def
+			localPoint begin
+			10 string cvs cvn /to exch def
+			10 string cvs cvn /from exch def
+			
+			/Object /connectType def
+
+			/next	localLink def
+			/parent localGroup def
+			/self	localRef def	
+
+			end
+
+	
+	%        this.connections.put(new Integer(i), localPoint);
+			connections objectID =string cvs cvn localPoint put
+
+			%localPoint dfa
+			
+verbose {
+localPoint dfa
+(--------) =
+} if
+/verbose oldVerbose def
+		}
+	
+	6	{ 
+	verbose { (text) = } if
+			
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+			
+			read1	%	m (strlen)
+			dup string /localStringBuffer1 exch def
+	
+			0 1 3 -1 roll 1 sub {
+				localStringBuffer1 exch read1 put
+	
+			} for 
+			%localStringBuffer1 ==
+        
+			read2	% i3 attrib
+			read1	% i8 st
+			
+			read3	% i9  x
+			read3	% i10 y
+	
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+	
+			/localText1 10 dict def
+			localText1 begin
+			/y1 exch def
+			/x1 exch def
+			/attrib_style exch def
+			
+			/attrib_dir exch def 
+
+		verbose {
+		attrib_dir qdbp 
+		% split it out
+		dup 0 12 getinterval print ( ) print
+		dup 12 1 getinterval print ( ) print
+		%dup 13 1 getinterval print ( ) print
+		13 3 getinterval print (b TextAttributes) =
+		} if
+
+			
+			/attrib_size  attrib_dir -4 bitshift def
+			/attrib_dir attrib_dir 16#07 and def
+	
+			/attrib_vis true def
+			
+			/displayText localStringBuffer1 def
+			
+			/Object /textType def
+
+			/next	localLink def
+			/parent localGroup def
+			/self	localRef def	
+			
+			/lbb1X x1 def
+			/lbb1Y y1 def
+			
+			
+			/lbb2Y lbb1Y attrib_size add def  % used for bbox calculations
+			
+			% enter a fictitious graphic state to calculate bbox widths
+			DisplayFont attrib_size selectfont
+			/lbb2X lbb1X displayText stringwidth pop add def 
+			
+	
+			end
+        
+			%localText1 dfa       
+        
+%       	 TextAttributes localTextAttributes = new TextAttributes(i6, i5, i8, true);
+        
+%       	Text localText1 = new Text(i9, i10, localTextAttributes, localStringBuffer1.toString());
+
+%       	this.currentSheet.add(localText1);
+			/ref objectID =string cvs cvn def
+			currentSheet ref localText1 put
+
+
+%        	addSubComponent(this.subComponents, localText1, k);
+			localText1 createAddGroup
+  
+		
+		}
+	
+	7	{
+	verbose { (rectangle ) = }if
+	 	
+			read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+
+			read3	% m (x1)
+			read3	% i1 (y1)
+			read3 	% i3 (x2)
+			read3	% i5  (y2)
+	
+			read2	verbose {(skipped parameter: ) print ==}{pop}ifelse
+	
+%    	    localObject1 = new Rectangle(m, i1, i3, i5);
+	
+			/localObject1 10 dict def
+			localObject1 begin
+			/y2 exch def % lrX
+			/x2 exch def % lrX
+			/y1 exch def % ulY
+			/x1 exch def % ulX
+			
+			/Object /rectType def
+
+			/next	localLink def
+			/parent localGroup def
+			/self	localRef def	
+	
+				% local bounding box 
+			/lbb1X	x1 x2 min def
+			/lbb1Y	y1 y2 min def
+					
+			/lbb2X	x1 x2 max def
+			/lbb2Y	y1 y2 max def		
+
+					
+			end
+				
+        	%localObject1 dfa
+
+%   	    this.currentSheet.add((MutableTreeNode)localObject1);
+			/ref objectID =string cvs cvn def
+			currentSheet ref localObject1 put
+
+%	        addSubComponent(this.subComponents, (CircuitObject)localObject1, k);
+			localObject1 createAddGroup
+
+
+	}
+	
+	8	{ 
+	verbose { (line) = } if
+	
+			read1 verbose {(skipped parameter: ) print ==}{pop}ifelse
+		
+	        read3	% m (x1)
+	        read3	% i1 (y1)
+	        read3 	% i3 (x2)
+        	read3	% i5  (y2)
+
+			read1	verbose {(skipped parameter: ) print ==}{pop}ifelse
+           
+%		localObject1 = new Line(m, i1, i3, i5);
+			/localObject1 10 dict def
+			localObject1 begin
+			/y2 exch def
+			/x2 exch def
+			/y1 exch def
+			/x1 exch def 
+			
+			/Object /lineType def
+
+			/next	localLink def
+			/parent localGroup def
+			/self	localRef def	
+			
+			% local bounding box 
+			/lbb1X	x1 x2 min def
+			/lbb1Y	y1 y2 min def
+					
+			/lbb2X	x1 x2 max def
+			/lbb2Y	y1 y2 max def		
+					
+			end
+       	
+        	%localObject1 dfa
+
+
+        
+%       this.currentSheet.add((MutableTreeNode)localObject1);
+			/ref objectID =string cvs cvn def
+			currentSheet ref localObject1 put
+
+%       addSubComponent(this.subComponents, (CircuitObject)localObject1, k);
+			localObject1 createAddGroup
+
+	}
+	
+	9	{
+	verbose { (circle/arc) = }if
+		
+			read1	% m
+
+	        read3	% i5         
+    	    read3	% i7 
+        
+        	read3	% i8 
+        
+        	read2 verbose {(skipped parameter: ) print ==}{pop}ifelse
+%											x1  y1      r
+%        	Circle localCircle = new Circle(i5, i7, i1, i8, i3);
+        	/localCircle 10 dict def
+        	localCircle begin
+        
+        	/radius exch def
+      		/y1 exch def
+      		/x1 exch def
+      	
+      		/shape exch def
+      	
+      		/arc_dir shape -5 bitshift  def
+      		/shape shape 16#07 and def
+      		
+      		/Object /arcType def
+
+			/next	localLink def
+			/parent localGroup def
+			/self	localRef def	
+      		
+ 
+  			% local bounding box 
+			/lbb1X	x1 radius sub def
+			/lbb1Y	y1 radius sub def
+					
+			/lbb2X	x1 radius add def
+			/lbb2Y	y1 radius add def	
+
+      	  
+       		end
+ 
+ 			%localCircle dfa
+       
+
+%        this.currentSheet.add(localCircle);
+			/ref objectID =string cvs cvn def
+			currentSheet ref localCircle put
+
+
+%        addSubComponent(this.subComponents, localCircle, k);
+			localCircle createAddGroup
+  
+				
+		}
+		
+>> def
+
+
+
+
+/pageOperators << % >>
+	
+	% 10 .. 29 not defined
+	
+	30 {
+		(j30 exeption) =
+tfn ==
+showpage
+%			createComponents
+							
+			tfn status {
+			 pop pop
+			 tf fileposition sub /rbtr exch def
+			 pop
+			}if
+			
+			/xBytes rbtr  string def
+			
+			0 1 rbtr 1 sub {
+				xBytes exch read1 put
+			} for 
+			
+			%xBytes =$
+			%xBytes ==
+			
+			%tf 	rbtr string readstring {dup =$ =}if   % read plain text		
+			
+%			read1 16 =string cvrs print (h ) =
+		
+			exit
+		
+	}
+
+	31	{ 
+		(\nSheet) = 
+/verbose false def
+
+
+		
+		(read3: ) dsysparm3
+		(read3: ) dsysparm3
+		(read1: ) dsysparm1
+	
+%		createComponents
+
+		read1	%m
+		dup string /localStringBuffer2 exch def
+
+		0 1 3 -1 roll 1 sub {
+			localStringBuffer2 exch read1 put
+
+		} for 
+
+		localStringBuffer2 dup (new Sheet: ) print ==
+	
+		
+		(\np1: ) dsysparm3
+        (1p: ) dsysparm1
+        
+        (\nsp: ) dsysparm3
+        (sp: ) dsysparm3 
+        (1p: ) dsysparm1
+        (1p: ) dsysparm1
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+
+		(\nsp: ) dsysparm2
+		(sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        
+        (\n1p: ) dsysparm1
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (1p: ) dsysparm1
+        (1p: ) dsysparm1
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+
+		(\nsp: ) dsysparm2
+		(sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (1p: ) dsysparm1
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (1p: ) dsysparm1
+        (1p: ) dsysparm1
+        (sp: ) dsysparm3 
+        
+        	read3 	%i3
+        	read3 	%i5
+
+		(\nsp: ) dsysparm2
+	    (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (1p: ) dsysparm1
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (1p: ) dsysparm1
+        (1p: ) dsysparm1
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+
+		(\nsp: ) dsysparm2
+		(sp: ) dsysparm3 
+        (sp: ) dsysparm3 
+
+
+/verbose false def
+
+%       this.currentSheet = new Sheet(localStringBuffer2.toString(), i3, i5);
+		
+ 
+				
+		%TimeStamp
+		/thisSheet SubFilename (_Sheet_) strcat sheetCount =string cvs strcat cvn def
+		/sheetCount sheetCount 1 add def
+
+		(creating new sheet) print thisSheet ==
+
+		globalCircuit thisSheet 10 dict put
+
+		/currentSheet globalCircuit thisSheet get def
+
+		currentSheet begin
+		(leakydicts: ) print countdictstack ==
+		
+		
+		/flushFlag true def
+		
+		/components 10 dict def			
+		/subComponents 10 dict def	
+		/edges 10 dict def
+		/connections 10 dict def
+	
+		/junctions 10 dict def
+	
+		/symbols 10 dict def
+		/nets 10 dict def
+		/tempNets 10 dict def
+		/library 10 dict def
+
+
+% alternate names
+			
+			/groups subComponents def
+			/refs components def
+			
+			/netlist [ symbols nets tempNets edges connections ] def
+		
+			/height exch def
+			/width exch def
+			/name exch def
+			
+			/Object /sheetType def
+			/LinkId 0 def
+		
+			%currentSheet dfa
+			
+
+%       localCircuit.add(this.currentSheet);
+				
+						
+		}
+	
+	
+
+>> def
+
+/readComponents {
+
+	{
+		
+		read3 /objectID exch def  % decode 3 bytes	
+%(leaks:) print	Object ==
+%countdictstack ==			
+		
+		objectID 0 eq {
+		
+			read1 /pageID exch def
+		
+			pageOperators pageID 2 copy known {
+				get exec
+			}{
+%createComponents
+
+     			(Unknown object type ) print == pop
+			}ifelse
+			
+		}{
+				
+			read1
+			/objType exch def
+	
+			read3
+			/groupID exch def
+			
+			read3
+			/linkID exch def
+			
+			verbose  {
+				(\ncode: ) print objType =string cvs print 
+				( id: ) print objectID =string cvs print 
+				( group: ) print groupID =string cvs print 
+				( link: ) print linkID ==
+			} if
+			
+			/localRef objectID =string cvs cvn def
+			/localGroup groupID =string cvs cvn def
+			/localLink linkID =string cvs cvn def
+			
+						
+			% can not find this in xpcb
+			read1 verbose {(\nmystery parameter: ) print dup 16 =string cvrs print (h \n) print ==}{pop} ifelse
+		
+			parse_components objType 2 copy known {
+
+				get exec
+			}{
+%createComponents
+				     			
+     			(Unknown object type ) print == pop
+		
+			} ifelse
+		} ifelse
+		
+		
+	} loop
+	tf closefile
+%(eleaks:) print	Object ==
+%countdictstack ==			
+
+} bind def
+
+
+/qdbp {
+% quick and dirty binary print
+ 16#10000 or 2 =string cvrs 1 16 getinterval
+} bind def
+
+
+
+/print_libfile {
+
+	writefiles  {
+		libfileref exch writestring
+	}{
+		print
+	}ifelse
+} bind def
+
+/print_netfile {
+
+	writenets  {
+		netfileref exch writestring
+	}{
+		print
+	}ifelse
+} bind def
+
+/print_cmpfile {
+
+	writenets  {
+		cmpfileref exch writestring
+	}{
+		print
+	}ifelse
+} bind def
+
+
+/print_schfile {
+
+	writefiles {
+		schfileref exch writestring
+	}{
+		print
+	}ifelse
+} bind def
+
+
+/print_profile {
+
+	writefiles {
+		profileref exch writestring
+	}{
+		print
+	}ifelse
+} bind def
+
+% these are the module setup and drawing instances
+/workingDict 10 dict def		% place a working directory into the dictstack
+								% which will contain the Kicad
+								% mode drawing commands
+
+/workingDir 10 dict def		% place a working directory into the dictstack
+							% which will contain the Kicad
+							% mode drawing commands
+
+
+/findCenter {
+
+	/partCenterArray 2 array def  
+			
+	% get the center of rotation for the part from the bounding box of
+	% the pins
+	
+	drawList /pinCount known {
+		drawList begin
+		
+		maxY minY sub 2 div
+		maxX minX sub 2 div
+		minX add  partCenterArray 0 3 -1 roll put
+		minY add  partCenterArray 1 3 -1 roll put
+		
+%		 partCenterArray { }forall
+%		 print_schfile ( ) print_schfile  print_schfile (\n) print_schfile
+		 %exch
+		 %cvi =string cvs 
+		 %cvi =string cvs print (\n) print
+		
+		 %2 index transform exch == ==
+		 %(->) print pstack (<-) = 
+		 %0 0 2 index transform exch == ==
+		 %minX minY 2 index transform exch == ==
+%(pc:) print count ==			
+		end
+	}{
+		(#Warning: ) print id print ( component has no pins) =
+		(0 0\n) print
+		/partCenterArray [ 0 0] def
+		
+		
+	}ifelse
+
+
+} bind def
+
+
+/searchPins {
+%Object ==
+
+		/searchLink firstLink def 
+				
+		{
+			drawList searchLink {get} stopped {exch pop (search pins bad link: ) print == exit} if
+		
+			begin
+					 
+			Object /lineType eq {
+
+				% matching the minimal pin to a line should
+				 % be able to give us the orientation of the 
+				% symbol.
+				3 1 roll % the boolean
+			 
+				x1 2 index eq 3 1 roll
+				y1 1 index eq
+				4 -1 roll and {
+(# matched first point: ) print
+					drawMatrix transform
+					x2 y2 
+					drawMatrix transform
+					
+					4 array astore exch pop true 
+					workingDir self true put		% mark this pin for deletion
+					end exit
+				}{
+					x2 2 index eq 3 1 roll
+					y2 1 index eq
+					4 -1 roll and {
+(# matched second point: ) print
+
+						drawMatrix transform
+						x1 y1
+						drawMatrix transform
+
+						4 array astore exch pop true
+						workingDir self true put		% mark this pin for deletion									
+						end exit
+					}{
+							3 -1 roll % put the boolean back
+					}ifelse
+																 
+				}ifelse
+						 
+			} if
+		next end 
+
+%Object ==	
+		dup /0 eq {pop exit}if
+
+		/searchLink exch def
+				
+		} loop
+								
+		% at this point we should have an array that determines
+		% the direction of the object
+		{
+			
+			/lineExtArray exch def 
+									
+			%pop % the false flag
+									
+			% use atan to find the direction of the symbol
+lineExtArray ==
+													
+(# pin: ) print pinNo =string cvs print ( ") print
+pinName print (" ) print 
+						
+			lineExtArray cvx exec	
+			3 -1 roll sub 3 1 roll exch sub 2 copy 0 eq exch 0 eq and {0}{atan}ifelse
+			
+			
+%		(pin found ->) print pstack (<-) = flush
+				
+			<< % >
+			
+			0 {
+				/k_pinLen lineExtArray 2 get lineExtArray 0 get sub def
+				/k_pinDir ( R ) def
+			} 
+			
+			90 {
+				/k_pinLen lineExtArray 3 get lineExtArray 1 get sub def
+				/k_pinDir ( U ) def
+			} 
+			
+			180 {
+				/k_pinLen lineExtArray 0 get lineExtArray 2 get sub def
+				/k_pinDir ( L ) def
+			} 
+			
+			270 {
+				/k_pinLen lineExtArray 1 get lineExtArray 3 get sub def
+				/k_pinDir ( D ) def
+			} 
+			
+			>> 1 index abs cvi 2 copy known {
+				get exec
+			}{ pop 0 get exec} ifelse
+			/localOrentation exch def
+			
+(\n# Pin rotation: ) print localOrentation ==	
+		
+		}{
+			%  pin does not have a line segment drawn
+(# pin singularity found.) =
+			/k_pinLen 0 def
+			/k_pinDir [( U ) ( D )]pinNo 2 mod get def
+			
+			/lineExtArray [0 0 0 0] def
+			% this may be the symbol for a marked connection dot or a
+			% single point wire connection (like a test point)
+			pop pop
+
+%(ispin->) print pstack (<-) =
+		
+		}ifelse 
+
+
+											
+} def
+
+
+/newPolyline {
+
+	/k_polyLine 10 dict def
+
+	/listLink firstLink def 
+
+	{ 
+		drawList listLink {get} stopped {exch pop (k component bad link: ) print == exit} if
+		begin
+
+%	Object ==
+		Object /lineType eq {
+		
+			% copy non pin lines to 
+
+			workingDir self known not {
+				k_polyLine self currentdict put
+			}{(*) print }ifelse
+
+		} if
+		next end 
+
+		dup /0 eq {pop exit}if
+
+		/listLink exch def
+
+	} loop
+} bind def
+
+
+
+
+/prepLibDef {
+
+	% pinFLags would give us the direction
+	% but it is not reliable -- so we need to find the line
+	% which in Kicad is part of the pin
+
+	exch 
+
+(#lib definition: ) print == %pop 	% normally called in a forall context
+	begin
+
+	/partCenterArray where {
+
+		pop
+		%/Orientation Orientation 180 add def
+
+(# part orientation: ) print Orientation ==
+%(pcf: ) print count ==
+
+	}{
+		
+		findCenter
+		
+		/Orientation 180 def
+
+	}ifelse
+
+
+	%drawMatrix concat
+	/drawMatrix 
+(# partCenterArray: ) print partCenterArray ==		
+		partCenterArray {neg} forall
+		matrix translate 
+%(dm: ) print count ==
+		
+		Orientation matrix rotate 
+		
+		matrix concatmatrix
+	
+		-1 1 matrix scale
+		
+		matrix concatmatrix
+		
+	
+	def
+(# drawMatrix: ) print drawMatrix ==
+
+
+
+} bind def
+
+
+/missingRefCount 100 def
+
+/ConnectTxt << % >>
+
+	/DB		{ pop (DB9) } 	
+	/DB15	{ pop (DB15) } 
+	/DB25	{ pop (DB25) } 
+	/DB37	{ pop (DB37) } 
+	/Jumper	{ pop (JP) } 
+	/Jack	{ pop (Jack) }
+	 
+	/Ribbon	{ 
+			token {
+				pop % the word cable
+				token {
+					dup type /integertype eq {
+						(PINHEAD_2x) exch 2 div cvi 25 string cvs strcat
+					
+	%		(r->) print pstack (<-) = flush
+						exch pop
+						/refTxt (P) def
+					}{
+						72 string cvs exch pop
+						dup 0 1 getinterval /refTxt exch def
+					}ifelse
+				}{
+					(CON_) missingRefCount 25 string cvs 1 2 getinterval strcat
+					/missingRefCount missingRefCount 1 add def
+					/refTxt (P) def
+				}ifelse	
+			}{
+			(CON_) missingRefCount 25 string cvs 1 2 getinterval strcat
+			/missingRefCount missingRefCount 1 add def
+			/refTxt (P) def
+			}ifelse	  
+	 } 
+	
+	/RJ11-4	{ pop (RJ114) } 
+	/RJ11-6	{ pop (RJ116) } 
+	/RJ45-8	{ pop (RJ45) } 
+	/USB	{ pop (USB) } 
+	/Wire	{ pop (TP) } 	
+
+>> def
+
+
+/refTexts << % >>
+
+
+	/Connector {
+		token {
+			pop
+			token {
+				ConnectTxt exch 2 copy known {
+					get exec
+				}{
+					dup type /integertype eq {
+						(PINHEAD_1x) exch 25 string cvs strcat
+						/refTxt (P) def
+						exch pop exch pop
+				%(->) print pstack (<-) = flush
+					}{
+						72 string cvs exch pop
+						dup 0 1 getinterval /refTxt exch def
+					}ifelse
+				}ifelse
+			}{
+			(CON_) missingRefCount 25 string cvs  1 2 getinterval strcat
+			/missingRefCount missingRefCount 1 add def
+			}ifelse
+		}{
+		    (CON_) missingRefCount 25 string cvs  1 2 getinterval strcat
+			/missingRefCount missingRefCount 1 add def
+		}ifelse
+	}
+
+	/IC {
+		/manufacture () def
+		/description () def
+		/package () def
+		token {
+				pop 
+				%(->) print pstack (<-) = flush
+				( - ) search {
+					dup 0 get 55 eq {			% defaults to 74xxx series
+						exch pop exch			%
+						( - ) search {
+								% save the rest of the string in case we want
+							% to populate more of the component description
+							/description exch def pop /package exch def
+						}if
+					}{
+						dup 0 get 67 eq {		% defaults to CD4000 series
+							exch pop exch  %
+							( - ) search {
+					%(->) print pstack (<-) = flush
+								% save the rest of the string in case we want
+								% to populate more of the component description
+								/description exch def pop /package exch def
+							}if
+						}{
+							/manufacture exch def pop
+							( - ) search {
+							 exch pop exch %
+							( - ) search {
+						%(->) print pstack (<-) = flush
+									% save the rest of the string in case we want
+									% to populate more of the component description
+									/description exch def pop /package exch def
+								}if
+							} if
+						}ifelse	
+					}ifelse
+				}if % use the left over string as the library name
+		}{
+		    (IC) missingRefCount 25 string cvs  1 2 getinterval strcat
+			/missingRefCount where {begin /missingRefCount missingRefCount 1 add def end}if
+		}ifelse
+		(manufacture: ) print manufacture ==
+		(description: ) print description ==
+		(package: ) print package ==
+		
+		package length 0 ne {
+			% deal with package type to avoid duplicate keys
+			<< % >>
+				/DIP (N) 
+				/SOIC (c)
+				/TQFP (f)
+				/TSOP (A)
+				/PLCC (p)
+				/BGA (b) 
+				/SSOP (s)
+
+			>> package 
+	
+%			(->) print pstack (<-) = flush
+			
+			(-) search {cvn exch pop exch pop}if 
+%			(->) print pstack (<-) = flush
+			2 copy known {
+				get strcat dup ==
+			}{pop pop} ifelse
+		
+		
+		}if
+%		(cs: ) print count == flush
+%		count 1 gt {(->) print pstack (<-) = flush stop} if
+		refTxt length 0 eq {
+			/refTxt (U) def
+		}if 
+
+	} 
+
+	
+	/Misc {
+
+		<< % >>
+		/Battery { pop (BT)}
+		/Fuse 	 { pop (F)}
+		/Microphone { pop (Mic)}
+		/Motor 	{ pop (M)}
+		/Relay { pop (K) }% - SPDT
+		/Speaker { pop (SP)}
+		/Transformer { (- small) eq {(T)}{ (TLarge)}ifelse} % - small
+		
+		%/Transformer
+		>> exch
+		token {pop token {3 -1 roll exch }{/notdef}ifelse}{/notdef}ifelse
+
+		2 copy known {
+			get exec
+			
+		}{
+			pop pop
+		    (MISC) missingRefCount 25 string cvs  1 2 getinterval strcat 
+			/missingRefCount where {begin /missingRefCount missingRefCount 1 add def end}if
+		}ifelse
+	}
+	
+	/Passive	{
+		<< % >>
+		/Capacitor {
+			cvn << % >>
+			/polarized (CP)
+			/variable (CV)
+			>> exch 2 copy known { get} {pop pop (C)} ifelse
+		}
+		
+		/Ceramic { pop (X)}% resonator with caps
+		/Crystal { pop (Y) /refTxt (Y) def}
+		
+		/Inductor {(variable) eq { (LV)}{ (L)}ifelse}
+		
+		/Potentiometer { pop (POT)}
+		
+		/Resistor {
+			(network ) search {pop pop 3 get 56 eq {(RN8)}{(RN10)}ifelse}{pop (R)} ifelse
+		} 
+			
+		>> exch
+		token {pop token {3 -1 roll exch }{/notdef}ifelse}{/notdef}ifelse
+ 		
+ 
+		2 copy known {
+			get exec
+			
+		}{
+			pop pop
+		    (Passive) missingRefCount 25 string cvs  1 2 getinterval strcat 
+			/missingRefCount where {begin /missingRefCount missingRefCount 1 add def end}if
+		}ifelse
+		
+	}
+	
+	/Semiconductor	{ 
+		<< % >>
+		/Diode 
+		{
+			dup length 5 ge {
+				dup 0 5 getinterval
+				cvn << % >>
+				/bridg { dup ==
+				9 get 68 eq {(W04GGI)}{(KBL04)}ifelse}
+				/zener {pop (ZENER)}
+			>> exch 2 copy known { get exec} {(dd->) print pstack (<-) =pop pop pop (DIODE)} ifelse
+			}{
+				pop (DIODE)
+			}ifelse
+		}
+		
+		/FET { 0 get 80 eq {(pFET)}{(nFET)}ifelse} 
+		
+		/LED { pop (LED)} 
+		/Transistor { 0 get 80 eq {(QPNP)}{(QNPN)}ifelse} %NPN
+		>> exch
+		token {pop token {3 -1 roll exch }{/notdef}ifelse}{/notdef}ifelse
+ 
+		2 copy known {
+			get exec
+			
+		}{
+			pop pop
+		    (Semiconductor) missingRefCount 25 string cvs  1 2 getinterval strcat 
+			/missingRefCount where {begin /missingRefCount missingRefCount 1 add def end}if
+		}ifelse
+
+	 } 
+	
+	/Switch	{ 
+		<< % >>
+		/DPDT {pop (DPDT)} 
+		/Momentary { 1 get 79 eq {(PBNO)}{(PBNC)}ifelse} 
+		%/Momentary NO
+		/SPDT {pop (SPDT)} 
+		/SPST {pop (SPST)} 
+		>> exch 
+		token {pop token {3 -1 roll exch }{/notdef}ifelse}{/notdef}ifelse
+ 		(z->) print pstack (<-) =
+		
+		
+		2 copy known {
+			get exec
+		}{
+			pop pop
+		    (SW) missingRefCount 25 string cvs  1 2 getinterval strcat 
+			/missingRefCount where {begin /missingRefCount missingRefCount 1 add def end}if
+		}ifelse
+	} 
+
+>> def
+
+
+/writeLibDef {
+
+	newPolyline 
+
+	currentdict /Orientation known {
+		
+(# saved orientation: ) print	Orientation ==
+
+	
+	}{
+
+(# Orientation not initialized) = flush
+				
+	}ifelse 
+
+			
+	(#\n# ) print_libfile libRef =string cvs  print_libfile (_expressPCB\n#\n) print_libfile
+	
+	(DEF ) print_libfile libRef =string cvs  print_libfile (_expressPCB ) print_libfile refTxt print_libfile 
+	% not used offset draw pin draw name unit count unit flag option
+	( 0 40 Y Y 1 F ) print_libfile
+	
+	DEF_option print_libfile
+	
+	% need to get offset/skew from pin graphic
+	
+	%F n “text” posx posy dimension orientation visibility hjustify vjustify/italic/bold “name”
+	(F0 ") print_libfile newRefTxt print_libfile (" ) print_libfile 
+	refInfo getAttributes TextAttributes begin
+
+	attrib_dir K_TXT_DIRECTION Orientation
+	2 copy known { get exec } {pop pop /lKTxtOrent (H ) def /lKTxtJust (L T) def } ifelse
+
+	x1 y1 drawMatrix transform exch 
+	cvi 25 string cvs print_libfile ( ) print_libfile
+	cvi 25 string cvs print_libfile ( ) print_libfile 
+		
+	attrib_size =string cvs print_libfile ( ) print_libfile
+
+
+	lKTxtOrent print_libfile
+
+	attrib_vis {
+		(V ) print_libfile % visibility not vertical	-- add once lib conversion is debugged
+	}{
+		(I ) print_libfile % visibility not vertical	-- add once lib conversion is debugged
+	}ifelse
+
+	
+	lKTxtJust print_libfile
+	(NN\n) print_libfile  % to be fixed since we can be plain or bold
+
+	end
+
+
+	(F1 ")print_libfile libRef =string cvs  print_libfile (" ) print_libfile 
+	valueInfo getAttributes TextAttributes begin
+
+	attrib_dir K_TXT_DIRECTION Orientation
+	2 copy known { get exec } {pop pop /lKTxtOrent (H ) def /lKTxtJust (L T) def } ifelse
+
+		
+	x2 y2 drawMatrix transform exch 
+	cvi 25 string cvs print_libfile ( ) print_libfile
+	cvi 25 string cvs print_libfile ( ) print_libfile 
+	
+	attrib_size =string cvs print_libfile ( ) print_libfile
+
+	lKTxtOrent print_libfile
+
+	attrib_vis {
+		(V ) print_libfile % visibility not vertical	-- add once lib conversion is debugged
+	}{
+		(I ) print_libfile % visibility not vertical	-- add once lib conversion is debugged
+	}ifelse
+
+	lKTxtJust print_libfile
+	(NN\n) print_libfile  % to be fixed since we can be plain or bold
+
+	end
+
+	(DRAW\n) print_libfile
+
+
+	k_polyLine {
+		exch pop  % no need to mark link ref
+		begin
+
+		%P Nb parts convert thickness x0 y0 x1 y1 xi yi cc
+		(P 2 1 0 0  ) print_libfile 
+		x1 y1 drawMatrix transform exch 
+		cvi 25 string cvs print_libfile ( ) print_libfile
+		cvi 25 string cvs print_libfile ( ) print_libfile 
+		
+		x2 y2 drawMatrix transform exch 
+		cvi 25 string cvs print_libfile ( ) print_libfile
+		cvi 25 string cvs print_libfile 
+		
+		( N\n) print_libfile
+		end
+	} forall
+	
+%	(->) print pstack (<-) =
+	/listLink firstLink def
+		
+	{ 
+		drawList listLink {get} stopped {exch pop (write rect bad link: ) print == exit} if
+		begin
+
+		% can not render till we have the proper direction 
+		
+		Object /rectType eq
+		{
+					
+			%S startx starty endx endy unit convert thickness cc
+			(S ) print_libfile 
+			x1 y1 drawMatrix transform exch 
+			cvi 25 string cvs print_libfile ( ) print_libfile
+			cvi 25 string cvs print_libfile ( ) print_libfile 
+			
+			x2 y2 drawMatrix transform exch 
+			cvi 25 string cvs print_libfile ( ) print_libfile
+			cvi 25 string cvs print_libfile 
+			
+			( 0 1 0 N\n) print_libfile	
+			
+		} if
+	
+		next end 
+		
+		dup /0 eq {pop exit}if
+
+		/listLink exch def
+	
+	} loop
+
+	
+%	(->) print pstack (<-) =
+	/listLink firstLink def
+		
+	{ 
+		drawList listLink {get} stopped {exch pop (write arc bad link: ) print == exit} if
+		begin
+
+		% can not render till we have the proper direction 
+		
+		Object /arcType eq
+		{
+%shape ==
+			
+			shape 1 eq {
+			% can draw a circle
+				%C posx posy radius unit convert thickness cc
+				
+				(C ) print_libfile
+				x1 y1 drawMatrix transform exch 
+				cvi 25 string cvs print_libfile ( ) print_libfile
+				cvi 25 string cvs print_libfile ( ) print_libfile
+				
+				radius 25 string cvs print_libfile 
+				( 0 1 0 N\n) print_libfile
+				
+				
+			}{
+			
+			% must render the arc with endpoints
+			% gets messy with the rotations
+				%A posx posy radius start end part convert thickness cc start_pointX start_pointY end_pointX end_pointY.
+				%(arcs are broken too lazy to calculate endpoints) =
+				(A ) print_libfile
+				x1 y1 drawMatrix transform  /yt exch def /xt exch def
+				xt cvi 25 string cvs print_libfile ( ) print_libfile
+				yt cvi 25 string cvs print_libfile ( ) print_libfile
+				
+				radius 25 string cvs print_libfile ( ) print_libfile
+
+				KSCH_ARC_DIRECTION arc_dir 1 sub get shape get 
+				dup {Orientation 10 mul sub 25 string cvs print_libfile ( ) print_libfile} forall
+
+%(leaks: ) print count ==				
+%() = 
+				(0 1 0 N ) print_libfile
+%(->) print pstack (<-) = flush
+
+				% this is the boring part finding the xy point from the angle
+				{ 10 div radius exch 2 copy 
+					cos mul round cvi 3 1 roll
+					sin mul round cvi 
+					yt add exch xt add exch 
+					% add in the center offset
+					25 string cvs print_libfile ( ) print_libfile
+					25 string cvs print_libfile ( ) print_libfile
+				} forall 
+				(\n) print_libfile
+			} ifelse 
+			
+		} if
+	
+		next end 
+		
+		dup /0 eq {pop exit}if
+
+		/listLink exch def
+	
+	} loop
+
+	
+	/listLink firstLink def
+		
+	{ 
+		drawList listLink {get} stopped {exch pop (write pin bad link: ) print == exit} if
+		begin
+
+		% can not render till we have the proper direction 
+		
+		Object /pinType eq
+		{
+			
+			%X name number posx posy length orientation <tx sz #> <tx sz nm> unit convert Etype [shape].
+			(X ) print_libfile
+			
+			pinName length 0 eq {
+			(~) 
+			}{
+				pinName ( ) eq {
+					(~) 
+				}{
+					% replace spaces in name with underscore
+					[ pinName {} forall ] makestring % make a copy of the string on the stack
+	
+					0 1 2 index length 1 sub
+					{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+
+				}ifelse
+			}ifelse
+			print_libfile ( ) print_libfile
+			
+			pinNo =string cvs print_libfile ( ) print_libfile 
+			
+			x1 y1 drawMatrix transform exch 
+			cvi 25 string cvs print_libfile ( ) print_libfile
+			cvi 25 string cvs print_libfile ( ) print_libfile 
+			
+			
+			k_pinLen cvi 25 string cvs print_libfile
+			k_pinDir 25 string cvs print_libfile
+	
+			pinNoAttrib getAttributes TextAttributes begin			
+			attrib_size =string cvs print_libfile ( ) print_libfile
+			end
+			pinNameAttrib getAttributes TextAttributes begin			
+			attrib_size =string cvs print_libfile
+			end
+			( 1 1 U\n) print_libfile
+				
+		} if
+	
+		next end 
+		
+		dup /0 eq {pop exit}if
+
+		/listLink exch def
+	
+	} loop
+	
+	(ENDDRAW\nENDDEF\n) print_libfile
+	
+	end
+	
+} bind def
+
+
+/K_component {
+(# K_component: ) =
+
+	prepLibDef
+
+	drawList firstLink 2 copy known {
+		
+		/listLink exch def 
+		pop
+		% bottom of stack  contains ordered pin array
+		% that we will index into
+
+		{ 
+			drawList listLink {get} stopped {exch pop (k component bad link: ) print == exit} if
+			begin
+	
+			Object /pinType eq
+			{
+				
+				x1 y1 false   % find matching line
+								
+				searchPins
+		
+			} if % process next pin
+
+			next end 
+
+			dup /0 eq {pop exit}if
+
+			/listLink exch def
+
+		} loop
+
+	}{
+
+		/listLink exch def
+SubFilename print 
+( Object has no root: ) print
+listLink ==
+		 
+		pop % dfa	 
+(\nObject->) print Object ==
+(# attempting to get list from currentSheet ) = flush
+			 
+	%/listLink currentdict firstLink def
+		{ 
+			currentSheet listLink get begin
+	
+(list Object: ) print Object ==
+(list self: ) print self ==
+			
+			Object /titleBlockType eq {
+				drawList firstLink 2 copy known {
+	
+(multiple gated symbol is title block) = flush
+			
+				/listLink exch def 
+				pop
+count ==
+countdictstack == 
+				{ 
+					drawList listLink {get} stopped {exch pop (k component bad link: ) print == exit} if
+					begin
+		
+					Object /pinType eq
+					{
+						
+						x1 y1 false   % find matching line
+										
+						searchPins
+				
+					} if % process next pin
+	
+	
+					next end 
+		
+					dup /0 eq {pop exit}if
+	
+					/listLink exch def
+		
+				} loop
+				
+(# Object: ) print Object ==
+				
+				drawList
+				firstLink
+				
+				end 
+				% move the drawlist from the title block to the
+				% component level
+(# Object: ) print Object ==
+				
+				/firstLink exch def
+				/drawList exch def
+			
+	
+				exit  % get what we can
+	
+				}{
+					pop pop
+				}ifelse
+			}if
+			
+			
+			next end 
+		
+			dup /0 eq {pop exit}if
+	
+			/listLink exch def
+		
+		} loop
+(# debug info) =
+count ==			
+countdictstack ==		
+		 
+	}ifelse
+	
+	/DEF_option ( N\n) def
+		
+	staticlib {
+		SubFilename token { 
+		
+			%exch pop %decomposeRef 
+			
+			refTexts  exch 2 copy known {
+				get exec /libRefTxt exch def
+			
+			}{
+				72 string cvs /libRefTxt exch def pop pop
+			}ifelse
+			%instance 
+			%libRefTxt
+			%origRefTxt
+			%newRefTxt
+			%72 string cvs (***) strcat	/var_18 exch def %newRefTxt (***) strcat def
+		}{
+				(Component) missingRefCount 25 string cvs  1 2 getinterval strcat 
+				/libRefTxt exch def
+				/missingRefCount where {begin /missingRefCount missingRefCount 1 add def end}if
+				%/refTxt (REF) def
+		}ifelse
+			
+		 
+		
+		/libRef [ libRefTxt {} forall ] makestring % make a copy of the string on the stack
+	
+		 0 1 2 index length 1 sub
+		{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+	
+		cvn def
+		
+		/newRefTxt refTxt def	
+	} if
+	
+			
+	writeLibDef
+
+} bind def
+
+/K_symbol {
+
+	prepLibDef
+
+	/libRefTxt [ SubFilename {} forall ] makestring % make a copy of the string on the stack
+
+	 0 1 2 index length 1 sub
+	{1 index exch 2 copy get dup 32 eq {pop 95} if put } for
+
+	def
+
+	
+	
+	drawList firstLink 2 copy known {
+																	
+		/listLink exch def 
+		
+		pop % this is the group dict with min max stuff
+		
+		% find the first pin reference -- should be only 1 pin in group
+		
+		{
+		
+			drawList listLink {get} stopped {exch pop (bad link) print == exit} if
+		
+			begin
+					 
+			Object /pinType eq {
+							
+				x1 y1 false
+				
+				exit % stop on the first pin found leave dict open for render
+			}if
+			next end 
+	
+			dup /0 eq {pop exit}if
+
+			/listLink exch def
+		
+		}loop
+		
+		Object ==  % there should be a pin dict in the group
+		
+		searchPins
+
+		end % the pin dict	
+
+											
+	}{
+		(# bad root link:) print == pop
+	}ifelse
+
+	newPolyline
+
+	% if the part does not tell us what it is get the info from the
+	% name string
+	
+	refTxt length 0 eq {
+	
+		valueTxt length 0 eq {
+			SubFilename token {
+				72 string cvs 
+%	(->) print pstack (<-) = flush
+				[ exch {}forall ] makestring /refTxt exch def
+				refTxt (Port) eq {
+					token {% the separator
+						pop
+						[ exch {}forall ] makestring /valueTxt exch def
+					}if
+	  
+	  				/DEF_option ( N\n) def
+		
+				}{
+					/DEF_option ( P\n) def
+
+					/libRefTxt refTxt def
+					[ 35 valueTxt {}forall ] makestring /refTxt exch def
+
+				}ifelse
+
+			}if
+		}{
+		
+%	(refcng) print refTxt == valueTxt ==	
+			/libRefTxt valueTxt def
+			
+		%	/valueTxt refTxt def
+			
+			/refTxt (#Power) def		
+
+			/DEF_option ( P\n) def
+
+
+		}ifelse
+	
+	}if	
+	
+	/libRef libRefTxt cvn def
+	
+	/newRefTxt refTxt def
+	
+	writeLibDef
+	
+} bind def
+
+/K_schem {
+
+	globalCircuit {
+		exch  
+(\n# filenameHash: ) print 72 string cvs /filenameBase exch def
+		
+		filenameBase (-cache.lib) strcat /filenamecache$ exch def
+		filenameBase (.sch) strcat /filenamehash$ exch def  
+
+		KiCadDataFolderPfx filenamehash$ strcat dup =
+		
+		% Open output files
+		writefiles { (w) file /schfileref exch def}{pop}ifelse
+		
+(\n) print
+		
+		begin
+
+		% Open output file
+		
+		% write KiCad header
+
+		%(EESchema Schematic File Version 1\n) print_schfile
+		(EESchema Schematic File Version 2  date ) print_schfile %Monday, 25 February 2013 16:49:15
+		StartTime$ print_schfile (\n) print_schfile
+		(LIBS:SchSymbols_Library_K.lib\n) print_schfile
+		(LIBS:Common_expressPCB_K.lib\n) print_schfile
+		(LIBS:IC74XXX_expressPCB_K.lib\n) print_schfile
+		(LIBS:IC4000series_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICAnalogDev_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICAtmel_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICBurrBrown_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICDallas_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICHitachi_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICIntersil_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICLinearTech_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICMaxim_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICMicrochip_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICNational_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICOtherMfg_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICPhillips_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICST_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICTI_expressPCB_K.lib\n) print_schfile
+		(LIBS:ICToshiba_expressPCB_K.lib\n) print_schfile
+		(LIBS:SchComponents_Custom_K.lib\n) print_schfile
+		(LIBS:) print_schfile filenamecache$  print_schfile 
+		(\n) print_schfile 
+		(EELAYER 23 0\n) print_schfile
+		(EELAYER END\n) print_schfile
+		($Descr Letter 11000 8500\n) print_schfile % can read this from sheet 
+		(Sheet 1 1\n) print_schfile			
+		
+		
+		% process title block
+
+		currentdict /13 2 copy known { get
+			%extract title block info  -- schematic name
+			/displayText 2 copy known {
+				get
+			}{
+				pop pop ()
+			}ifelse
+		}{
+			pop pop (A title) 
+		}ifelse
+		(Title ") print_schfile print_schfile ("\n) print_schfile
+
+		currentdict /17 2 copy known { get
+			%extract title block info  -- date
+			/displayText 2 copy known {
+				get
+			}{
+				pop pop ()
+			}ifelse
+		}{
+			pop pop StartTime$ 
+		}ifelse
+		(Date ") print_schfile print_schfile ("\n) print_schfile
+
+		currentdict /16 2 copy known { get
+			%extract title block info  -- revision
+			/displayText 2 copy known {
+				get
+			}{
+				pop pop ()
+			}ifelse
+		}{
+			pop pop (rev)
+		}ifelse
+		(Rev ") print_schfile print_schfile ("\n) print_schfile
+
+		currentdict /15 2 copy known { get
+			%extract title block info  -- expresPCB page# comment
+			/displayText 2 copy known {
+				get
+			}{
+				pop pop ()
+			}ifelse
+		}{
+			pop pop ()
+		}ifelse
+		(Comp ") print_schfile print_schfile ("\n) print_schfile
+
+		currentdict /14 2 copy known { get
+			%extract title block info  -- designers name (comment)
+			/displayText 2 copy known {
+				get
+			}{
+				pop pop ()
+			}ifelse
+		}{
+			pop pop ()
+		}ifelse
+		(Comment1 ") print_schfile print_schfile ("\n) print_schfile
+
+			currentdict /12 2 copy known { get
+			%extract title block info  -- company comment
+			/displayText 2 copy known {
+				get
+			}{
+				pop pop ()
+			}ifelse
+		}{
+			pop pop ()
+		}ifelse
+		(Comment2 ") print_schfile print_schfile ("\n) print_schfile
+
+		(Comment3 ""\n) print_schfile
+		(Comment4 ""\n) print_schfile
+		($EndDescr\n) print_schfile
+
+
+		refs { 
+			exch 
+			
+verbose {==}{pop}ifelse 
+			
+			dup type /dicttype eq { 
+				begin 
+				
+				% componentType
+				
+				Object /componentType eq {
+
+					% part reference
+
+					% now we have enough info to draw the component to the library
+					% if the component is common like a resistor or a cap
+					% we do not save a new instance of it
+										
+					findCenter
+
+					% find rotation
+					/pinRotArray 2 array def 
+					/listLink firstLink def
+						
+					{ 
+						drawList listLink get begin
+						Object /pinType eq
+						{
+							pinNo 1 eq { 
+								pinRotArray 0 currentdict put
+							} if  
+							pinNo 2 eq { 
+								pinRotArray 1 currentdict put
+							} if  
+							
+						} if
+						% can not render till we have the proper direction 
+						%renderers Object get exec
+						
+						next end 
+						
+						dup /0 eq {pop exit}if
+				
+						/listLink exch def
+					
+					} loop
+%(fr->) print pstack (<-) =
+						
+%(# rotational array : ) print pinRotArray	==		
+						
+					pinRotArray 0 get dup null ne {begin x1 y1 end}{pop 0 0}ifelse
+					pinRotArray 1 get dup null ne {begin x1 y1 end}{pop 1 1}ifelse
+					3 -1 roll sub 3 1 roll exch sub 2 copy 0 eq exch 0 eq and {90 }{atan}ifelse							
+					<<0 90 90 0 180 270 270 180>> exch abs 2 copy known {
+						get /localOrientation exch def
+					}{
+						pop pop /localOrientation 0 def
+					}ifelse
+%(lo->) print pstack (<-) =
+
+
+%(local: ) print	localOrientation ==
+					 
+					/Orientation localOrientation 180 sub def
+
+%count ==
+					/componentMatrix
+						partCenterArray {neg cvi  }forall  matrix translate
+						Orientation  matrix rotate matrix concatmatrix
+						-1 1 matrix scale matrix concatmatrix	
+						partCenterArray { cvi  }forall  matrix translate matrix concatmatrix
+					def
+					
+%					componentMatrix ==
+%(# leaks: ) print count ==				
+%(->) print pstack (<-) =
+%showpage
+					($Comp\nL ) print_schfile libRef =string cvs print_schfile (_expressPCB ) 
+					print_schfile refTxt print_schfile (\n) print_schfile
+					(U 1 1 ) print_schfile TimeStamp print_schfile (\n) print_schfile
+																	
+					(P ) print_schfile 
+			
+					partCenterArray {cvi 25 string cvs print_schfile ( ) print_schfile}forall  
+					(\n) print_schfile
+%count ==				
+					%field_number “text” orientation posX posY size Flags (see below) hjustify vjustify/italic/bold “name”
+					(F 0 ") print_schfile refTxt print_schfile (" ) print_schfile
+					refInfo getAttributes TextAttributes begin
+					
+					attrib_dir K_TXT_DIRECTION Orientation
+					2 copy known { get exec } {pop pop /lKTxtOrent (H ) def /lKTxtJust (L T) def } ifelse
+														
+					lKTxtOrent print_schfile
+					
+					% use matrix to retain normal transformation orientation
+					% so that the text remains un rotated when the component
+					% is rotated from library version
+					x1 y1 componentMatrix transform exch
+					cvi =string cvs print_schfile ( ) print_schfile
+					cvi =string cvs print_schfile ( ) print_schfile
+					
+					attrib_size =string cvs print_schfile ( ) print_schfile
+					(0000 ) print_schfile   % need to fix visibility flags once understood
+					
+					lKTxtJust print_schfile 
+					(NN\n) print_schfile % can set this to normal or bold
+					end
+					
+					(F 1 ") print_schfile valueTxt print_schfile (" ) print_schfile
+					
+					valueInfo getAttributes TextAttributes begin
+					attrib_dir K_TXT_DIRECTION Orientation
+					2 copy known { get exec } {pop pop /lKTxtOrent (H ) def /lKTxtJust (L T) def } ifelse
+										
+					lKTxtOrent print_schfile
+
+					% use matrix to retain normal transformation orientation
+					x2 y2 componentMatrix transform exch
+					cvi =string cvs print_schfile ( ) print_schfile
+					cvi =string cvs print_schfile ( ) print_schfile
+
+					attrib_size =string cvs print_schfile ( ) print_schfile
+					(0000 ) print_schfile   % need to fix visibility flags once understood
+
+					lKTxtJust print_schfile 
+					(NN\n) print_schfile % can set this to normal or bold
+					end
+							
+					(    1    ) print_schfile
+					partCenterArray {cvi 25 string cvs print_schfile ( ) print_schfile }forall  
+					(\n) print_schfile
+					
+					Orientation matrix rotate -1 1 matrix scale matrix concatmatrix					 
+					0 4 getinterval {(    ) print_schfile cvi =string cvs print_schfile}forall
+					(\n) print_schfile
+						
+					($EndComp\n) print_schfile
+							
+										
+				} if
+				
+				end
+			}if 
+						
+		} forall
+
+tfn ==
+showpage
+
+		/drawMatrix matrix def   % schematics are not scaled by 10
+
+	
+%print_schfile
+		% render named nets
+		workingDir begin /netPowerRefHash 100 def end
+		
+		nets {
+			exch /thisNet exch def 
+
+(\n# drawing net: ) print thisNet ==
+			
+			{
+				exch pop %(instance: ) print ==
+				begin
+				Object /symbolType eq {
+				
+
+					drawList firstLink 2 copy known {
+																				
+						/listLink exch def 
+					
+						pop % this is the group dict with min max stuff
+					
+						% find the first pin reference -- should be only 1 pin in group
+					
+						{
+						
+							drawList listLink {get} stopped {exch pop (bad link) print == exit} if
+						
+							begin
+									 
+							Object /pinType eq {
+											
+								x1 y1 false
+								
+								exit % stop on the first pin found leave dict open for render
+							}if
+							next end 
+					
+							dup /0 eq {pop exit}if
+				
+							/listLink exch def
+						
+						}loop
+						
+(symbol object: ) print Object ==  % there should be a pin dict in the group
+						
+						searchPins
+						
+						lineExtArray {cvi}forall %exch translate	
+%(pt->) print pstack (<-) = flush
+
+						3 -1 roll sub 3 1 roll exch sub 2 copy 0 eq exch 0 eq and {pop pop 90 }{atan}ifelse
+						<<0 90 90 0 180 270 270 180>> exch abs 2 copy known {
+						get /localOrientation exch def
+					}{
+(# non orthagonal rotation) =
+(->) print pstack (<-) = flush
+						pop pop /localOrientation 0 def
+					}ifelse
+
+%(symbol local: ) print	localOrientation ==
+%(leaks: ) print count ==				
+
+					/Orientation localOrientation def
+
+
+					/symbolMatrix
+					x1 y1 matrix translate
+					def
+
+					/symbolRotMatrix
+					localOrientation matrix rotate
+					-1 1 matrix scale 
+					symbolMatrix
+					matrix concatmatrix
+					matrix concatmatrix
+					def
+					
+symbolMatrix ==
+(leaks: ) print count ==				
+																				
+					% mask out the built in power symbols
+					<< % >>
+						/Power 180
+						/Gnd 0
+						/+5v 180 
+						/+9v 180
+						/+12v 180
+						/-5v 0
+						/-9v 0
+						/-12v 0
+						
+						% these are typical power net names
+						
+						/VCC 180
+						/VSS 0
+						/VDD 180
+						/Vcc 180
+						/Vss 0
+						/Vdd 180
+						/COM 0
+						/Com 0
+						/+3		180
+						/+3v	180
+						/+3.3	180
+						/+3.3v	180
+						/+3V3	180
+						/+3v3	180
+						/3V3	180
+						/3v3	180
+						/6V		180
+						/6v 	180
+					>> thisNet 2 copy known {
+						% KiCad seems to use a global symbol ref to
+						% match this while keeping the text in 
+						% the right place we need to hack the 
+						% rotation by searching for power symbols
+					
+					
+						get 
+						%Orientation exch sub 
+						/hackRotation exch def
+						% insert a symbol reference into the schematic
+						% for this power symbol
+
+						($Comp\nL ) print_schfile thisNet =string cvs
+						(_expressPCB) strcat print_schfile
+							
+						/refTxt (#PWR)
+						
+						workingDir begin  netPowerRefHash =string cvs
+						% keep track of reference count								
+						/netPowerRefHash netPowerRefHash 1 add def end
+
+						1 2 getinterval strcat def
+										
+						( ) print_schfile refTxt print_schfile (\n) print_schfile
+						 
+						(U 1 1 ) print_schfile TimeStamp print_schfile (\n) print_schfile
+									
+						(P ) print_schfile 
+						
+						x1 cvi =string cvs print_schfile ( ) print_schfile
+						y1 cvi =string cvs print_schfile (\n) print_schfile
+
+							%F 0 "#PWR07" H 4800 6650 30  0001 C CNN
+
+						(F 0 ") print_schfile refTxt print_schfile (" ) print_schfile
+
+						% should be in the header dict
+						refInfo getAttributes TextAttributes 
+						/attrib_dir get  
+						K_TXT_DIRECTION hackRotation 2 copy known { 
+							get exec 
+						}{
+(# wierd rotation: ) =
+(->) print pstack (<-) = flush				
+							pop pop pop /lKTxtOrent (H ) def /lKTxtJust (L T) def 
+						} ifelse
+										
+						lKTxtOrent print_schfile
+					
+						% use matrix to retain normal transformation orientation
+						% so that the text remains un rotated when the component
+						% is rotated from library version
+
+						currentdict end x1 y1 3 -1 roll begin % the pin dict	
+						
+						% text is rotated in relation to the
+						% component center
+						
+						symbolRotMatrix itransform		% plot in component space
+						symbolMatrix transform 	exch		% back to user space
+						cvi =string cvs print_schfile ( ) print_schfile
+						cvi =string cvs print_schfile ( ) print_schfile
+
+						TextAttributes /attrib_size get =string cvs print_schfile 
+						( ) print_schfile
+							
+						(0000 ) print_schfile   % need to fix visibility flags once understood
+
+						lKTxtJust print_schfile 
+						(NN\n) print_schfile % can set this to normal or bold
+						(F 1 ") print_schfile valueTxt print_schfile (" ) print_schfile
+												
+						valueInfo getAttributes TextAttributes 
+						/attrib_dir get  
+
+						 K_TXT_DIRECTION hackRotation
+						2 copy known { get exec } {pop pop pop /lKTxtOrent (H ) def /lKTxtJust (L T) def } ifelse
+
+										
+						lKTxtOrent print_schfile
+						currentdict end x2 y2 3 -1 roll begin
+						% text is rotated in relation to the
+						% component center
+						
+						symbolRotMatrix itransform		% plot in component space
+						symbolMatrix transform exch			% back to user space
+						cvi =string cvs print_schfile ( ) print_schfile
+						cvi =string cvs print_schfile ( ) print_schfile
+						
+						TextAttributes /attrib_size get =string cvs print_schfile ( ) print_schfile
+						(0000 ) print_schfile   % need to fix visibility flags once understood
+
+						lKTxtJust print_schfile 
+						(NN\n) print_schfile % can set this to normal or bold attrib_style
+
+						(1    ) print_schfile
+						x1 cvi =string cvs print_schfile ( ) print_schfile
+						y1 cvi =string cvs print_schfile (\n) print_schfile
+							
+																
+						hackRotation 
+						matrix rotate -1 1 matrix scale matrix concatmatrix					 
+						0 4 getinterval {(    ) print_schfile cvi =string cvs print_schfile}forall
+						(\n) print_schfile
+								
+						($EndComp\n)print_schfile
+						end % the pin dict
+
+					}{
+						pop pop
+						% this net is not known
+						% Use a global symbol box to note this net name
+							
+						(WIRE WIRE LINE\n) print_schfile
+						lineExtArray 
+						{cvi =string cvs print_schfile ( ) print_schfile}forall
+						%(\n) print_schfile
+						
+						% labels always get a junction
+						(\nConnection ~ ) print_schfile  
+						lineExtArray 0 2 getinterval 
+						cvx exec exch
+						cvi 25 string cvs print_schfile ( ) print_schfile 
+						cvi 25 string cvs print_schfile %(\n) print_schfile 
+													
+						(\nText GLabel ) print_schfile 
+							
+						lineExtArray 2 2 getinterval {cvi 25 string cvs print_schfile ( ) print_schfile } forall
+						
+						/localOrentation where {
+							pop
+						}{
+							/localOrentation 180 def
+						}ifelse
+								
+						<<0 (2    ) 90 (3    ) 180 (0    ) 270 (1    )>> localOrentation 2 copy known{get}{pop pop (0    ) }ifelse print_schfile
+						
+						end % the pin dict
+							
+						valueInfo getAttributes TextAttributes begin
+						attrib_size =string cvs print_schfile (   Input ~ 0\n) print_schfile
+						end
+						
+							
+						thisNet =string cvs print_schfile (\n) print_schfile
+
+					}ifelse
+										
+				}{
+					exch pop (Bad root link) = ==
+				}ifelse
+		
+			}if % symbol type
+			end	% net symbol instance
+		}forall % net instance
+	} forall	% nets
+				
+(junction table: ) =
+	junctions {
+		2 gt {
+			35 string cvs (_) search {
+				exch pop
+				cvi exch cvi
+				drawMatrix transform exch
+				(Connection ~ ) print_schfile  
+				cvi 25 string cvs print_schfile ( ) print_schfile 
+				cvi 25 string cvs print_schfile (\n) print_schfile 
+			}{
+				pop
+			}ifelse
+		}{
+			pop
+		}ifelse
+
+	}forall
+(# wires by net\n) print
+% dump connections in net order	
+	tempNets {
+		dup type /dicttype eq {
+			begin
+			(# ) print
+			netNumber =string cvs print
+			(: ) print =string cvs print
+			(\n) print
+			
+				/nextNetlink root def
+				
+verbose  {(/) print	nextNetlink =string cvs print flush}if
+				{				
+					connections nextNetlink get begin											
+					netLink self eq {	% prevent recursive loops on bad data
+						/netLink /0 def
+					}if
+					netLink
+					(WIRE WIRE LINE\n) print_schfile
+					edges from get begin
+						x1 =string cvs print_schfile ( ) print_schfile
+						y1 =string cvs print_schfile ( ) print_schfile
+					end
+					edges to  get begin
+						x1 =string cvs print_schfile ( ) print_schfile
+						y1 =string cvs print_schfile (\n) print_schfile
+					end
+					
+					
+verbose  {(-->/) print dup =string cvs print flush} if
+					currentdict
+					end
+					/linkDict exch def
+					/nextNetlink exch def
+					nextNetlink /0 eq{exit} if					
+				} loop
+verbose  {() = flush}if
+
+			
+			end
+		}{
+			pop pop
+		}ifelse
+	} forall
+(# dictstack count: ) print	countdictstack ==			
+
+(------------) =
+	% write wires by net
+					
+	{
+				currentdict {
+					exch pop %(wire: ) print ==
+					dup type /dicttype eq {
+						begin
+										
+						Object /connectType eq {
+							
+							[							
+							edges from get begin x1 y1 end 
+							edges to get begin x1 y1 end 
+							] 
+							{cvi =string cvs print_schfile ( ) print_schfile}forall
+							(\n) print_schfile
+						}if
+							
+						end
+					}{pop} ifelse
+				} forall
+	}  pop
+
+
+	($EndSCHEMATC\n) print_schfile
+	writefiles { schfileref closefile }if
+
+writeFootprints {
+
+KiCadDataFolderPfx filenamecache$ strcat dup == 
+		
+	writefiles {(w) file /libfileref exch def}{pop}ifelse 
+		
+	% -------------- open library file
+	(EESchema-LIBRARY Version 2.3  Date: ) print_libfile StartTime$ print_libfile (\n) print_libfile
+	(#encoding utf-8\n) print_libfile		
+	% ----
+
+
+	% create library cache here
+	library {
+		{exit}forall  % we only need one sample reference
+		3 -1 roll 
+(# caching component: ) print ==
+			K_component
+	}forall
+	
+	(#\n#End Library\n) print_libfile
+	writefiles { libfileref closefile }if
+	end % --  sheet process
+} if
+
+	} forall % global circut
+
+
+writeProjectFile {
+	KiCadDataFolderPfx filenameprj$ strcat	
+	dup 
+	(creating new project file: ) print == %filenameprj$ ==
+%pstack (<-) =
+
+	% Open output file
+	writefiles { (w) file /profileref exch def}{pop}ifelse
+	
+	mark filenameprj$ status {
+		cleartomark
+	}{
+		
+		(update=) print_profile StartTime$ print_profile
+		(\nlast_client=kicad\n) print_profile
+		([eeschema]\n) print_profile
+		(version=1\n) print_profile
+		(LibDir=\n) print_profile
+		([eeschema/libraries]\n) print_profile
+% need to loop through globalCircuit for this list	
+		(LibName1=SchSymbols_Library_K.lib\n) print_profile
+		(LibName2=Common_expressPCB_K.lib\n) print_profile
+		(LibName3=IC74XXX_expressPCB_K.lib\n) print_profile
+		(LibName4=IC4000series_expressPCB_K.lib\n) print_profile
+		(LibName5=ICAnalogDev_expressPCB_K.lib\n) print_profile
+		(LibName6=ICAtmel_expressPCB_K.lib\n) print_profile
+		(LibName7=ICBurrBrown_expressPCB_K.lib\n) print_profile
+		(LibName8=ICDallas_expressPCB_K.lib\n) print_profile
+		(LibName9=ICHitachi_expressPCB_K.lib\n) print_profile
+		(LibName10=ICIntersil_expressPCB_K.lib\n) print_profile
+		(LibName11=ICLinearTech_expressPCB_K.lib\n) print_profile
+		(LibName12=ICMaxim_expressPCB_K.lib\n) print_profile
+		(LibName13=ICMicrochip_expressPCB_K.lib\n) print_profile
+		(LibName14=ICNational_expressPCB_K.lib\n) print_profile
+		(LibName15=ICOtherMfg_expressPCB_K.lib\n) print_profile
+		(LibName16=ICPhillips_expressPCB_K.lib\n) print_profile
+		(LibName17=ICST_expressPCB_K.lib\n) print_profile
+		(LibName18=ICTI_expressPCB_K.lib\n) print_profile
+		(LibName19=ICToshiba_expressPCB_K.lib\n) print_profile
+		(LibName20=SchComponents_Custom_K.lib\n) print_profile
+		(LibName21=) print_profile filenamecache$  print_profile
+		
+		(\n[pcbnew]\n) print_profile
+		(version=1\n) print_profile
+		([pcbnew/libraries]\n) print_profile
+		(LibDir=\n) print_profile
+		(LibName1=\n) print_profile
+		pstack cleartomark
+		
+	} ifelse
+	writefiles { profileref closefile }if	
+} if
+	
+} bind def % K schem
+	
+
+%###################################################################
+
+
+% create new baseline file names for batch processing mode
+
+
+/suffix tfd length def
+mark 47 46 tfd {}forall 
+{46 eq {exit}{/suffix suffix 1 sub def }ifelse} loop 
+/filenamepos suffix 1 sub def
+{47 eq { exit}{/filenamepos filenamepos 1 sub def /suffix suffix 1 sub def }ifelse} loop 
+{47 eq {exit}{/filenamepos filenamepos 1 sub def }ifelse} loop 
+] makestring (/.) anchorsearch {pop} if
+
+/PathPrefix exch def
+
+tfd filenamepos 1 sub suffix filenamepos sub 1 sub getinterval /SubDirName exch def
+
+
+	(infile dir prefix: ) print PathPrefix ==
+	(indir: ) print SubDirName ==
+	
+	(outfile folderpath prefix: ) print KiCadDataFolderPfx ==
+
+
+SubDirName (.pro) strcat
+/filenameprj$ exch def
+
+SubDirName (_K-cache.lib) strcat
+/KiCadCache$ exch def
+
+KiCadDataFolderPfx KiCadCache$ strcat
+/NewCacheName exch def
+
+SubDirName (_K.sch) strcat
+/NewSchematicName exch def
+
+KiCadDataFolderPfx SubDirName strcat  (_K.lib) strcat
+/NewLibraryName exch def
+
+(NewLibraryName: ) print NewLibraryName ==
+
+staticlib {
+	writefiles {/libfileref NewLibraryName (w) file def}if
+	() =
+	
+	% -------------- open library file
+	(EESchema-LIBRARY Version 2.3  Date: ) print_libfile StartTime$ print_libfile (\n) print_libfile
+	(#encoding utf-8\n) print_libfile		
+	% ----
+}if
+() =
+
+	
+	% parse the string to find our filename so we can create a new kicad project
+
+tfd
+{
+
+	cleardictstack % prevent leaky dicts
+%	(leakydicts: ) print countdictstack ==
+
+	/tfn exch def
+	verbose {(processing: ) print tfn ==}if
+	/tf tfn (r) file def 
+
+	/fatalError false def
+
+	/suffix tfn length def
+	[ 47 46 tfn {}forall 
+	{46 eq {exit}{/suffix suffix 1 sub def }ifelse} loop 
+	/filenamepos suffix 1 sub def
+	{47 eq {exit}{/filenamepos filenamepos 1 sub def }ifelse} loop 
+	] makestring (/.) anchorsearch {pop} if
+
+	/PathPrefix exch def
+
+	tfn filenamepos suffix filenamepos sub 1 sub getinterval /SubFilename exch def
+
+	(infile path prefix: ) print PathPrefix ==
+	(infile: ) print SubFilename ==
+	
+	
+	KiCadDataFolderPfx  SubFilename strcat /NewProjectPfx exch def 
+
+
+	SubFilename (-cache.lib) strcat
+	/KiCadCache$ exch def
+
+	NewProjectPfx KiCadCache$ strcat
+	/NewCacheName exch def
+
+	NewProjectPfx (_K.sch) strcat
+	/NewSchematicName exch def
+
+
+% parse the file
+
+%jSchem reads first 26 bytes
+%xsch treats the first two bytes of the header as a version #
+
+% read the header string
+
+	/var_4 0 def
+
+	/eHeader 12 string def
+
+	tf eHeader readstring {(\nraw header: <) print =$}{( failed to read header) =  /var_4 2 def exit} ifelse
+	
+	%0 1  2 3  4 5  6 7  8 9  0 1 
+	%<F87D 3101 0700 0000 0200 0E00>
+	 
+	Word_l$ 1 eHeader 2 2 getinterval putinterval Word_l$ cvx exec
+	(\nsignature number: ) print ==
+	 
+	(Version: ) print
+	Word_l$ 1 eHeader 4 2 getinterval putinterval Word_l$ cvx exec
+	/versionMajor exch def versionMajor =string cvs print (.) print 
+	
+	Word_l$ 1 eHeader 6 2 getinterval putinterval Word_l$ cvx exec
+	=string cvs print (.) print
+
+	Word_l$ 1 eHeader 8 2 getinterval putinterval Word_l$ cvx exec
+	=string cvs print (.) print
+ 
+	Word_l$ 1 eHeader 10 2 getinterval putinterval Word_l$ cvx exec
+	==
+
+
+	Long_l$ 1 eHeader 0 2 getinterval putinterval Long_l$ cvx exec
+	/fileFormat exch def 	
+	(\nfile format: ) print fileFormat 16 =string cvrs print (h ) print fileFormat ==
+
+	fileFormat FPTFILE gt {
+		fileFormat PCBFILE eq {
+			(\nPCB file) =
+		}{
+			(\n unknown file) =
+			/var_4 3 def
+			
+		}ifelse
+	}{
+		fileFormat FPTFILE eq {
+			(\nPCB footprint file) =
+		
+		}{
+			fileFormat SCHFILE eq {
+				(\nschematic file) =
+				/var_4 3 def
+			
+			}{
+				fileFormat CMPFILE eq {
+					(\nSchematic symbol file) =
+					/var_4 3 def
+				
+				}{
+					(\n unknown file) =
+					/var_4 3 def
+				
+				}ifelse
+			}ifelse
+		} ifelse	
+	}ifelse
+
+
+	fileFormat FPTFILE eq {	
+			% fails with key zero if ne	
+			tf 14 string readstring {(14 bytes: <) print =$}{( failed to read header) = exit} ifelse 
+	} if
+
+	
+	var_4 0 ne {
+		tf 14 string readstring {(14 bytes: <) print =$}{( failed to read header) = exit} ifelse 
+
+		initIO	% reads the key from the file header
+
+		/sheetCount where {/sheetCount undef}if
+		/sheetCount 1 def 
+
+		
+		/globalCircuit 10 dict def 
+
+		/LinkId 0 def
+		/LinkID 0 def
+			
+		fileFormat CMPFILE eq {
+
+			(New component library: ) print NewLibraryName ==
+%countdictstack ==			
+			% referred to as a compound object
+	
+			/currentSheet 10 dict def
+			currentSheet begin
+
+			/flushFlag true def
+			
+			/components 10 dict def			
+			/subComponents 10 dict def	
+			/edges 10 dict def
+			/connections 10 dict def
+			
+			/junctions 10 dict def
+	
+	
+			/symbols 10 dict def
+			/nets 10 dict def
+			/tempNets 10 dict def
+			/library 10 dict def
+
+
+% alternate names
+			
+			/groups subComponents def
+			/refs components def
+
+			
+			/height 10000 def
+			/width 10000 def
+			/name (temp) def
+			
+			/Object /sheetType def
+
+			readComponents
+%countdictstack ==			
+			
+			/flushFlag true def
+
+
+			components length dup 0 gt
+		%	pstack
+			 {
+				1 gt {(multiple gated symbol)= flush}
+				{
+					components {
+						
+						K_component
+						
+					} forall
+				}ifelse
+			}{pop} ifelse
+			
+			symbols length 0 gt { 
+				% create library cache here
+				symbols {
+				
+						
+					K_symbol
+
+	
+				}forall
+			}if
+							
+			end
+%(\nnextFile: ) print countdictstack ==
+		}if
+		
+		fileFormat SCHFILE eq  {
+			
+			(new schematic name: ) print NewSchematicName ==
+	
+			(cached lib name: ) print KiCadCache$ ==
+			
+
+			% schematic file
+			% reads 4 throwaway bytes from header
+			4 string dup tf exch readstring {(4byte: <) print =$}{ (failed to read header substring) = exit} ifelse
+			Long_l$ 1 3 -1 roll 0 2 getinterval putinterval Long_l$ cvx exec
+			/mk exch def
+(mk: ) print mk ==
+			
+			/flushFlag false def  % only render on exit
+			
+			readComponents
+			
+			createNets
+				
+			K_schem	
+				
+		}if
+	}if
+
+} 256 string filenameforall % for batch processing files
+
+
+staticlib {
+	(#\n#End Library\n) print_libfile
+	writefiles { libfileref closefile }if
+} if

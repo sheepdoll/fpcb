@@ -1,0 +1,798 @@
+%!PS
+
+% deconstructed writer for express schematic libraries
+
+% requires ghostscript min and max functions
+
+
+/tfd (<yourcachefile>_-cache.lib) def
+%-------------------------------------------------------------------------
+
+% to be done -- finish arc conversion rotation matrices start end points
+
+% multiple gates per package  can count gate in file -- root gate has pin 1?
+
+
+/KiCadDataFolderPfx (KiCad/myFiles/) def % change this to the full path where the 
+						% converted files will be stored.  Must be full path from
+						% top file directory, or files will be stored
+						% in the conversion source directory. Directory must exist.
+
+
+/verbose false def % return debug data on back channel
+
+/render true def % render the schematic to the postscript page
+
+/writefiles false def
+
+/fatalError false def
+
+% no user settings past this point
+
+%######################################################################
+
+
+/=$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile =} bind def
+
+/$ {dup length 2 mul dup 60 idiv add 1 add string dup 
+/ASCIIHexEncode filter 3 -1 roll 3 copy writestring 2 
+index flushfile pop pop  closefile } bind def
+
+%/dfa {pop} bind def  %
+/dfa {{ exch =string cvs print (: ) print ==} forall} bind def
+
+/makestring { 
+	%verbose 2 gt {(<) print =$} if
+	dup length string       % new string of right size
+	dup /NullEncode filter      % make a file out of string
+	2 index                 % array to stack top
+    { 2 copy write pop }         % integers to string
+	forall
+    flushfile exch pop                   % clean up
+} bind def
+
+/strcat {
+	dup length 2 index length add string
+	2 index length 3 -1 roll 3 copy putinterval pop pop 
+	0 3 -1 roll 3 copy putinterval pop pop 
+
+} bind def
+
+
+/Word_l$ <870000> def			% low first
+/Long_l$ <8500000000> def		% low first
+
+/Word$ <860000> def			% high first
+/Long$ <8400000000> def		% high first
+
+
+/flushFlag false def  % only render on exit
+
+/sheetCount 1 def 
+
+% level2 date function
+(%Calendar%) /IODevice resourcestatus {
+	pop pop (%Calendar%) currentdevparams
+	dup /Running get { /timedict exch def
+		[ 
+     	timedict /Year get 4 string cvs {} forall 45
+     	timedict /Month get 2 string cvs {} forall 45
+     	timedict /Day get 2 string cvs {} forall 32
+     	timedict /Hour get 2 string cvs {} forall 58
+     	timedict /Minute get 100 add 3 string cvs 1 2 getinterval {} forall 58
+     	timedict /Second get 100 add 3 string cvs 1 2 getinterval {} forall
+     	]
+		makestring dup == /StartTime$ exch def
+	}{
+     (Clock/calendar is present but not running.\n) print
+   } ifelse
+ } {
+   (No clock/calendar present.\n) print
+ } ifelse
+
+
+%quick and dirty proc for making a sort of timestamp
+/TimeStamp {
+(%Calendar%) currentdevparams begin
+10 dict begin  % make a local dictionary for constants
+/SEC_PER_HOUR 60 60 mul def
+/SEC_PER_DAY SEC_PER_HOUR 24 mul def 
+/SEC_IN_MONTH [0 2678400 5097600 7776000 10368000 13046400 15638400 18316800 20995200 23587200 26265600 28857600] def
+
+Year 1970 sub 365.2425 mul SEC_PER_DAY mul cvi % approximate the number of seconds since 0 time
+SEC_IN_MONTH Month 1 sub get cvi add  % add in the seconds to the first of the month
+Day 1 sub SEC_PER_DAY mul cvi add % seconds to midnight the prior day
+Hour SEC_PER_HOUR mul cvi add
+Minute 60 mul cvi add
+%	(->) print pstack (<-) =	
+Second add 
+%	(->) print pstack (<-) =	
+cvi 16 8 string cvrs
+
+end
+end
+} bind def
+% functions for decoding the input stream
+
+
+/qdbp {
+% quick and dirty binary print
+ 16#10000 or 2 =string cvrs 1 16 getinterval
+} bind def
+
+
+/library 10 dict def
+
+/sigDeco {
+	<< % >>
+	
+	/I {
+	% inversion symbol o
+		/radi Snom 2 div def
+		pinLen radi sub 0 radi 0 360 arc stroke
+		0 0 moveto pinLen Snom sub 0 lineto stroke
+	}
+	
+	/C {
+	% clock symbol >
+	}
+
+	/CI {
+	% inverted clock o>
+	}
+
+	/L {
+	% low |\
+	}
+
+	/CL {
+	% clock low |\>
+	
+	}
+
+	/V {
+	% output low /
+	}
+
+	/F {
+	% falling edge clock <
+	
+	}
+
+	/X {
+	% non logic X
+	
+	}
+	>> shape 2 copy known {
+		get exec
+	}{
+		pop pop
+		0 0 moveto pinLen 0 lineto stroke
+	}ifelse
+} bind def
+
+
+/Ki_parse << % >>
+
+	/# {
+	% comment
+		mark tf 72 string readline {(\% ) print ==}if cleartomark	
+	}
+	
+	/DEF {
+	%DEF name reference unused text_offset draw_pinnumber draw_pinname unit_count units_locked option_flag
+		tf token {
+			% parse the objects name
+			%(->) print pstack (<-) = flush
+			%dup type ==
+			72 string cvs cvn /groupName exch def
+			(Object: ) print groupName ==
+			library groupName 10 dict put
+			
+			library groupName get begin
+			tf token {/ref exch def} if
+
+			tf token {pop} if
+			tf token {/text_offset exch def} if
+			tf token {/draw_pinnumber exch def} if
+			tf token {/draw_pinname exch def} if
+			tf token {/unit_count exch def} if
+			tf token {/units_locked exch def} if
+			tf token {/option_flag exch def} if
+			
+			
+			% some default display vales for objects
+			% without field designators
+			/val_orientation  /H def
+			/value () def
+			/ref_hjustify /L def
+			/ref_size  50 def
+			/unit_count  1 def
+			/reference  () def
+
+			/text_offset  1 def
+			/y2  0 def
+			/val_hjustify  /L def
+			/val_size 50 def
+			/x2 0 def
+			/ref_visibility  /V def
+			/option_flag  /N def
+			/y1  50 def
+			/draw_pinname  /N def
+			
+			/val_visibility  /V def
+			/ref_vjustify  /B def
+			/x1  -50 def
+			/ref_orientation  /H def
+
+			/units_locked  /L def
+			/val_vjustify  /B def
+			/draw_pinnumber  /N def
+			
+
+			end
+		}if
+	}
+	
+	
+	/DRAW {
+		612 2 div 768 2 div translate % 180 rotate
+		72 500 div dup scale
+		%1 -1 scale
+		
+		1 0 0 setrgbcolor
+		
+		12 setlinewidth
+		
+		-3000 0 moveto 3000 0 lineto stroke
+		0 -3000 moveto 0 3000 lineto stroke
+		
+		0 0 0 setrgbcolor
+	
+	
+	}
+	
+	
+	/F0 {
+	%"X" 0 11200 50 H V L B
+	%F n “text” posx posy dimension orientation visibility hjustify vjustify/italic/bold “name”
+		library groupName get begin
+
+		/cfp tf fileposition def  % comments get messy as a comment followd by a return is not
+		
+		% should create the express component info dict here (#1)
+		tf read {
+			34 eq {
+				tf read {
+					dup 10 eq 1 index 13 eq or {  % may also want to check for CR
+						pop tf cfp setfileposition	
+					}{
+						[ exch
+						{
+							% parse manually due to the possibility of X followed by whitespace 
+							% in the input stream
+							tf read { dup 10 eq 1 index 13 eq  2 index 34 eq or or {pop exit}if}{exit}ifelse 
+						} loop 
+						] makestring /reference exch def
+						reference ==
+					}ifelse
+				}if
+			}if
+		}if
+
+		tf token {/x1 exch def} if
+		tf token {/y1 exch def} if
+
+		tf token {/ref_size exch def} if
+		tf token {/ref_orientation exch def} if
+		tf token {/ref_visibility exch def} if
+		tf token {/ref_hjustify exch def} if
+		tf token {/ref_vjustify exch def} if
+		
+		% may be two optional parameter here font and name
+					
+		end
+	}
+	
+	/F1	{
+	% "PN61729" 0 16000 50 H V L B
+		library groupName get begin
+		
+			/cfp tf fileposition def  % comments get messy as a comment followd by a return is not
+		
+		% should create the express component info dict here (#1)
+		tf read {
+			34 eq {
+				tf read {
+					dup 10 eq 1 index 13 eq or {  % may also want to check for CR
+						pop tf cfp setfileposition	
+					}{
+						[ exch
+						{
+							% parse manually due to the possibility of X followed by whitespace 
+							% in the input stream
+							tf read { dup 10 eq 1 index 13 eq  2 index 34 eq or or {pop exit}if}{exit}ifelse 
+						} loop 
+						] makestring /value exch def
+						value ==
+					}ifelse
+				}if
+			}if
+		}if
+
+		tf token {/x2 exch def} if
+		tf token {/y2 exch def} if
+
+		tf token {/val_size exch def} if
+		tf token {/val_orientation exch def} if
+		tf token {/val_visibility exch def} if
+		tf token {/val_hjustify exch def} if
+		tf token {/val_vjustify exch def} if
+		
+		% may be two optional parameter here font and name
+		
+		end
+
+
+	}
+	
+	/F2 {
+	% "SmartPrj-PN61729" 0 150 50 H I C C
+		mark tf 72 string readline {(footprint: )print ==}if cleartomark	
+
+	}
+
+	/P {
+	% polyline -- P 2 1 0 0 -19200 25600 -19200 -41600 N
+	%               # U C T 1      2     3      4
+	% P Nb parts convert thickness x0 y0 x1 y1 xi yi cc
+		tf token { 
+		gsave
+
+			/polycount exch def
+			
+			tf token {/unit exch def}if  % unit parts -- ignored for now
+			tf token {/convert exch def}if  % convert -- ignore same
+			
+			tf token {/thickness exch def} if
+
+			tf token {/x1 exch def}if
+			tf token {/y1 exch def}if
+			
+			x1 y1 moveto
+			polycount 1 sub {
+				tf token {/xi exch def}if
+				tf token {/yi exch def}if
+				 xi yi lineto 
+			} repeat
+			
+			tf token {/cc exch def}if
+			
+			polycount 2 eq {
+				thickness setlinewidth	stroke
+			}{
+			(cc: ) print /cc load ==
+			
+
+			<< % >>
+				/F {fill}
+				
+				/N {
+					thickness setlinewidth
+					stroke			
+				}
+				
+				% just in case a lower case f is used
+				/f {fill}
+			
+			
+			>> begin cc end
+
+			
+			}ifelse
+			
+		grestore	
+		}if
+	}
+	
+	/X {
+	% pin -- X GPIO1 23 16000 -19200 200 L 40 40 1 1 O 
+	% X name number posx posy length orientation Snum Snom unit convert Etype [shape].
+		%mark tf 72 string readline {(pintest: )print ==}if cleartomark	
+
+		% text names can and do contain parseable chars like ( and /
+
+
+%		tf token {72 string cvs /pinName exch def} if
+		[
+		72 
+		{
+			tf read {dup 32 eq {pop exit} if }if
+
+		} repeat
+		] makestring /pinName exch def
+
+		tf token {
+			dup type << % >>
+				/integertype {}
+				/nametype { pop 0 } 
+				/stringtype { pop 0 }
+			>> exch 2 copy known {
+				get exec
+			}{
+				exch pop (weird type: ) print ==
+				pop 0
+			}ifelse
+		
+			/pinNum exch def
+		
+		} if
+
+		tf token {/x1 exch def}if
+		tf token {/y1 exch def}if
+
+		tf token {/pinLen exch def}if
+		
+		tf token {/attr_dir exch def} if
+
+		tf token {/Snum exch def}if
+		tf token {/Snom exch def}if
+		tf token {/unit exch def}if
+		tf token {/convert exch def}if
+		tf token {/Etype exch def}if
+
+		% shape requires a marker
+		
+		% gets nasty as the shape can be X, which will crash token
+	
+		/cfp tf fileposition def  % comments get messy as a comment followd by a return is not
+								  % detected by the token operator
+				
+		/shape /notdef def						  
+		tf read {
+			dup 10 eq 1 index 13 eq or {  % may also want to check for CR
+				pop tf cfp setfileposition	
+			}{
+				[ exch
+				{
+					% parse manually due to the possibility of X followed by whitespace 
+					% in the input stream
+					tf read { dup 10 eq 1 index 13 eq  2 index 32 eq or or {pop exit}if}{exit}ifelse 
+				} loop 
+				] makestring cvn /shape exch def
+				shape ==
+			}ifelse
+		}if
+		
+		gsave 
+			x1 y1 translate
+			0 0 15 0 360 arc fill
+			
+			<< % >>
+				/U { 
+					90 rotate
+					sigDeco
+				
+					% marking the name text is tricky, since unlike express
+					% ki does not track the text orientation separate from the pin
+					
+					/AvanteGarde-Book Snum selectfont
+					pinLen 2 div 10 moveto pinNum 10 string cvs show
+
+					/AvanteGarde-Book Snom selectfont
+
+					pinLen 25 add Snom 2 div neg moveto pinName show				
+				
+				}
+				
+				/L {
+					gsave 
+					180 rotate
+					sigDeco
+					grestore
+					
+					/AvanteGarde-Book Snum selectfont
+					pinLen 2 div neg 10 moveto pinNum 10 string cvs show
+					
+					/AvanteGarde-Book Snom selectfont
+
+					pinName stringwidth pop neg 25 sub pinLen sub Snom 2 div neg moveto
+					pinName show 
+					
+				}
+				/R {
+
+					sigDeco
+				
+					% marking the name text is tricky, since unlike express
+					% ki does not track the text orientation separate from the pin
+					
+					/AvanteGarde-Book Snum selectfont
+					pinLen 2 div 10 moveto pinNum 10 string cvs show
+
+					/AvanteGarde-Book Snom selectfont
+
+					pinLen 25 add Snom 2 div neg moveto pinName show				
+				}
+				
+				/D { 
+					90 rotate
+					gsave 
+					180 rotate
+					sigDeco
+					grestore
+
+					
+					/AvanteGarde-Book Snum selectfont
+					pinLen 2 div neg 10 moveto pinNum 10 string cvs show
+					
+					/AvanteGarde-Book Snom selectfont
+
+					pinName stringwidth pop neg 25 sub pinLen sub Snom 2 div neg moveto
+					pinName show 
+				}
+			>>  begin attr_dir end 
+			
+		grestore
+	
+	}
+	
+	/S {
+	% rectangle 
+	%startx starty endx endy unit convert thickness cc
+			tf token {/x1 exch def}if
+			tf token {/y1 exch def}if
+			tf token {/x2 exch def}if
+			tf token {/y2 exch def}if
+
+			tf token {/unit exch def}if
+			tf token {/convert exch def}if
+
+			tf token {/thickness exch def}if
+
+			tf token {/cc exch def}if
+			
+			gsave
+			<< % >>
+				/F { x1 y1 x2 x1 sub y2 y1 sub rectfill }
+				
+				/N {
+					thickness setlinewidth
+					x1 y1 x2 x1 sub y2 y1 sub rectstroke			
+				}
+				
+				% just in case a lower case f is used
+				/f {x1 y1 x2 x1 sub y2 y1 sub rectfill }
+			
+			
+			>> begin cc end
+			grestore
+	
+%		mark tf 72 string readline {(rect: )print ==}if cleartomark	
+	
+	}
+	
+	/C { 
+	%A 0 -30  30   1 1 0 N 
+	%  x y    r   u c t cc  	
+	% C posx posy radius unit convert thickness cc	
+	
+			tf token {/x1 exch def}if
+			tf token {/y1 exch def}if
+			
+			tf token {/radius exch def}if
+	
+			tf token {/unit exch def}if
+			tf token {/convert exch def}if
+
+			tf token {/thickness exch def}if
+
+			tf token {/cc exch def}if
+
+			(CC: ) print /cc load =string cvs ==
+
+			gsave
+
+			x1 y1 radius startA endA arc
+			<< % >>
+				/F {fill}
+				
+				/N {
+					thickness setlinewidth
+					stroke			
+				}
+				
+				% just in case a lower case f is used
+				/f {fill}
+					
+			>> begin cc end
+			grestore
+	
+	}
+	
+	/A { 
+	%A 0 -960 960 -3599 -1801 1 1 0 N 960 -960 -960 -960
+	%A 0 -30  30  -3599 -1801 1 1 0 N 30 -30 -30 -30
+	%  x y    r   a     a     u c t cc  	
+	%A posx posy radius start end part convert thickness cc start_pointX start_pointY end_pointX end_pointY.
+			tf token {/x1 exch def}if
+			tf token {/y1 exch def}if
+			
+			tf token {/radius exch def}if
+			tf token {10 div /startA exch def}if
+			tf token {10 div /endA exch def}if
+
+			tf token {/unit exch def}if
+			tf token {/convert exch def}if
+
+			tf token {/thickness exch def}if
+
+			tf token {/cc exch def}if
+
+			tf token {/x2 exch def}if
+			tf token {/y2 exch def}if
+			tf token {/x3 exch def}if
+			tf token {/y3 exch def}if
+
+
+			(CC: ) print /cc load =string cvs ==
+
+			gsave
+
+			x1 y1 radius startA endA arc
+			<< % >>
+				/F {fill}
+				
+				/N {
+					thickness setlinewidth
+					stroke			
+				}
+				
+				% just in case a lower case f is used
+				/f {fill}
+			
+			
+			>> begin cc end
+			grestore
+
+
+			% when converting to express it will be necessary to divide
+			% the angle into the sectional arcs and find the best fit
+
+
+		%mark tf 72 string readline {(arc: )print ==}if cleartomark	
+	
+	}
+
+	/T	{
+	gsave
+	% 0 1600 -1600 2240 0 1 0 >TP_SIGNAL_NAME N 0 L B
+	% T orientation posx posy dimension unit convert Text
+		tf token {/orentation exch def}if
+		
+		tf token {/x1 exch def}if
+		tf token {/y1 exch def}if		
+		
+		tf token {/size exch def}if
+
+		tf token {/unit exch def}if
+		tf token {/convert exch def}if		
+
+		tf token {/parameter1 exch def} if 
+
+		tf read {
+			dup 10 eq 1 index 13 eq or {  % may also want to check for CR
+				pop tf cfp setfileposition	
+			}{
+				[ exch
+				{
+					% parse manually due to the possibility of X followed by whitespace 
+					% in the input stream
+					tf read { dup 10 eq 1 index 13 eq  2 index 32 eq or or {pop exit}if}{exit}ifelse 
+				} loop 
+				] makestring /liquidText exch def
+				liquidText ==
+			}ifelse
+		}if
+		
+		% it is possible these tokens may not be active
+		tf token {/style exch def}if  % Normal Bold Italic etc
+
+		tf token {/parameter2 exch def}if		
+
+		tf token {/HJust exch def}if		
+		tf token {/VJust exch def}if		
+		
+		x1 y1 translate
+		
+		orentation 0 ne { 90 rotate}if
+		
+		/AvanteGarde-Book size selectfont
+		
+		0 0 moveto liquidText show
+	
+	
+	
+	%	mark tf 72 string readline {(text: )print ==}if cleartomark	
+	grestore
+	}
+	
+	/ENDDRAW
+	{
+		library groupName get begin
+			/AvantGarde-Book ref_size selectfont
+			x1 y1 moveto 
+			
+			reference length 0 gt {reference show}
+			{	/ref load =string cvs show} ifelse
+			
+			/AvantGarde-Book val_size selectfont
+			x2 y2 moveto  
+			value length 0 gt {value show}
+			{	/groupName load =string cvs show} ifelse
+			
+		end
+		
+	}
+
+	/ENDDEF
+	{
+		library groupName get /ref get
+		(reference: ) print ==
+		showpage
+	}
+
+>> def 
+
+
+tfd 
+{
+	/tfn exch def
+	(processing: ) print tfn ==
+	/tf tfn (r) file def 
+
+	/fatalError false def
+
+	tf 72 string readline {
+		(EESchema-LIBRARY) anchorsearch {
+			pop pop		% ignore parse when valid header
+		}{
+			pop /fatalError true def exit 
+		}ifelse
+	}{
+		pop /fatalError true def exit
+	}ifelse 
+	
+
+
+	{
+		/cfp tf fileposition def  % comments get messy as a comment followd by a return is not
+								  % detected by the token operator
+								  
+		tf read {
+			35 eq {
+				mark tf 72 string readline {(\% ) print ==}if cleartomark	
+			}{ 
+				tf cfp setfileposition
+				tf token {
+					Ki_parse exch 2 copy known {
+						get exec
+					}{
+						(unimplemented or bad identifier: ) print ==
+						pop
+					}ifelse 
+				}{
+					exit 
+				}ifelse
+			}ifelse
+		}{
+			exit
+		}ifelse
+	}loop
+
+
+} 256 string filenameforall % for batch processing files
+
+
